@@ -420,11 +420,8 @@ std::map<std::string, char*> NodeBlock::getAllProperties() {
         char* copiedValue = new char[PropertyLink::MAX_VALUE_SIZE];
         std::strncpy(copiedValue, current->value, PropertyLink::MAX_VALUE_SIZE);
         allProperties.insert({current->name, copiedValue});
-        PropertyLink* temp = current->next();
-        delete current;  // To prevent memory leaks
-        current = temp;
+        current = current->next();
     }
-    delete current;
     return allProperties;
 }
 
@@ -433,11 +430,8 @@ std::map<std::string, std::string> NodeBlock::getAllMetaProperties() {
     MetaPropertyLink* current = this->getMetaPropertyHead();
     while (current) {
         allMetaProperties[current->name] = std::string(current->value);
-        MetaPropertyLink* temp = current->next();
-        delete current;
-        current = temp;
+        current = current->next();
     }
-    delete current;
     return allMetaProperties;
 }
 
