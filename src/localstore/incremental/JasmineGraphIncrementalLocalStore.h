@@ -44,7 +44,11 @@ class JasmineGraphIncrementalLocalStore {
     static std::pair<std::string, unsigned int> getIDs(std::string edgeString);
     JasmineGraphIncrementalLocalStore(unsigned int graphID = 0, unsigned int partitionID = 0,
                                       std::string openMode = "trunk", bool embedNode = false);
-    ~JasmineGraphIncrementalLocalStore() { delete nm; }
+    ~JasmineGraphIncrementalLocalStore() {
+        if (nm) delete nm;
+        if (embedding_requests) delete embedding_requests;
+        if (textEmbedder) delete textEmbedder;
+    }
     bool getAndStoreEmbeddings();
     void addLocalEdge(std::string edge);
     void addCentralEdge(std::string edge);
@@ -58,8 +62,8 @@ class JasmineGraphIncrementalLocalStore {
  private:
     std::string resolveOperationType(const json& edgeJson) const;
     std::string resolveOperationTimestamp(const json& edgeJson) const;
-   void logTemporalEvent(const json& edgeJson, const std::string& operationType,
-                    const std::string& operationTimestamp);
+    void logTemporalEvent(const json& edgeJson, const std::string& operationType,
+                          const std::string& operationTimestamp);
     bool handleNodeOperation(const json& nodeJson, const std::string& operationType,
                              const std::string& operationTimestamp);
     bool handleEdgeAddition(const json& edgeJson, const std::string& operationType,

@@ -31,48 +31,49 @@ limitations under the License.
 Logger incremental_localstore_logger;
 
 namespace {
-const std::string DEFAULT_OPERATION = TemporalConstants::OP_ADD;
-const std::string LOCAL_EDGE_TYPE = "Local";
+  const std::string DEFAULT_OPERATION = TemporalConstants::OP_ADD;
+  const std::string LOCAL_EDGE_TYPE = "Local";
 
-bool isLocalEdge(const json &edgeJson) {
-    if (!edgeJson.contains("EdgeType")) {
-        return false;
-    }
-    try {
-        return edgeJson["EdgeType"].get<std::string>() == LOCAL_EDGE_TYPE;
-    } catch (const std::exception &) {
-        return false;
-    }
-}
+  bool isLocalEdge(const json &edgeJson) {
+      if (!edgeJson.contains("EdgeType")) {
+          return false;
+      }
+      try {
+          return edgeJson["EdgeType"].get<std::string>() == LOCAL_EDGE_TYPE;
+      } catch (const std::exception &) {
+          return false;
+      }
+  }
 }  // namespace
 
 JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
     unsigned int graphID, unsigned int partitionID, std::string openMode,
     bool embedNode) {
-    gc.graphID = graphID;
-    gc.partitionID = partitionID;
-    gc.maxLabelSize = std::stoi(Utils::getJasmineGraphProperty(
-        "org.jasminegraph.nativestore.max.label.size"));
-    this->embedNode = embedNode;
-    this->embedding_requests = new std::vector<EmbeddingRequest>();
+  gc.graphID = graphID;
+  gc.partitionID = partitionID;
+  gc.maxLabelSize = std::stoi(Utils::getJasmineGraphProperty(
+      "org.jasminegraph.nativestore.max.label.size"));
+  this->embedNode = embedNode;
+  this->embedding_requests = new std::vector<EmbeddingRequest>();
 
-    gc.openMode = openMode;
-    this->nm = new NodeManager(gc);
-    this->temporalLogger = std::make_unique<TemporalEventLogger>(this->nm->getDbPrefix());
+  gc.openMode = openMode;
+  this->nm = new NodeManager(gc);
+  this->temporalLogger = std::make_unique<TemporalEventLogger>(this->nm->getDbPrefix());
     
-    if (this->embedNode) {
-        incremental_localstore_logger.info("Embedding enabled for the local store");
-        this->faissStore =
-            FaissIndex::getInstance(std::stoi(Utils::getJasmineGraphProperty(
-                                        "org.jasminegraph.vectorstore.dimension")),
-                                    this->nm->getDbPrefix() + "_faiss.index");
-        this->textEmbedder = new TextEmbedder(
-            Utils::getJasmineGraphProperty("org.jasminegraph.vectorstore.embedding."
-                                           "ollama.endpoint"),  // Ollama endpoint
-            Utils::getJasmineGraphProperty(
-                "org.jasminegraph.vectorstore.embedding.model"));
-    }
+  if (this->embedNode) {
+      incremental_localstore_logger.info("Embedding enabled for the local store");
+      this->faissStore =
+          FaissIndex::getInstance(std::stoi(Utils::getJasmineGraphProperty(
+                                      "org.jasminegraph.vectorstore.dimension")),
+                                  this->nm->getDbPrefix() + "_faiss.index");
+      this->textEmbedder = new TextEmbedder(
+          Utils::getJasmineGraphProperty("org.jasminegraph.vectorstore.embedding."
+                                         "ollama.endpoint"),  // Ollama endpoint
+          Utils::getJasmineGraphProperty(
+              "org.jasminegraph.vectorstore.embedding.model"));
+  }
 };
+
 bool JasmineGraphIncrementalLocalStore::getAndStoreEmbeddings() {
   std::vector<string> batch_request;
   for (EmbeddingRequest& request : *embedding_requests) {
@@ -108,15 +109,6 @@ std::pair<std::string, unsigned int> JasmineGraphIncrementalLocalStore::getIDs(
                    // type object even there is an error
 }
 
-void JasmineGraphIncrementalLocalStore::addEdgeFromString(
-    std::string edgeString) {
-  try {
-    auto edgeJson = json::parse(edgeString);
-    if (edgeJson.contains("isNode")) {
-      std::string nodeId = edgeJson["id"];
-      NodeBlock* newNode = this->nm->addNode(nodeId);
-
-<<<<<<< HEAD
 void JasmineGraphIncrementalLocalStore::addEdgeFromString(std::string edgeString) {
     try {
         auto edgeJson = json::parse(edgeString);
@@ -150,92 +142,31 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromString(std::string edgeString
             incremental_localstore_logger.warn("Failed to handle operation '" + operationType +
                                               "' for payload: " + edgeString);
         }
-    } catch (const std::exception&) {  // TODO tmkasun: Handle multiple types of exceptions
-        incremental_localstore_logger.log(
-                "Error while processing edge data = " + edgeString +
-                "Could be due to JSON parsing error or error while persisting the data to disk",
-                "error");
-        incremental_localstore_logger.log("Error malformed JSON attributes!", "error");
-        // TODO tmkasun: handle JSON errors
-=======
-      char value[PropertyLink::MAX_VALUE_SIZE] = {};
-      char meta[MetaPropertyLink::MAX_VALUE_SIZE] = {};
-
-      if (edgeJson.contains("properties")) {
-        auto sourceProps = edgeJson["properties"];
-        for (auto it = sourceProps.begin(); it != sourceProps.end(); it++) {
-          strcpy(value, it.value().get<std::string>().c_str());
-          newNode->addProperty(std::string(it.key()), &value[0]);
-        }
-      }
-
-      std::string sourcePid = std::to_string(edgeJson["pid"].get<int>());
-      strcpy(meta, sourcePid.c_str());
-      newNode->addMetaProperty(MetaPropertyLink::PARTITION_ID, &meta[0]);
-      return;
->>>>>>> master
+    } catch (const json::parse_error &ex) {
+        // JSON syntax errors
+        incremental_localstore_logger.error(
+            "JSON parse error while processing edge string: " + edgeString +
+            " | Error: " + std::string(ex.what()));
+    } catch (const json::type_error &ex) {
+        // Wrong JSON types (e.g., expecting string but got int)
+        incremental_localstore_logger.error(
+            "JSON type error: Invalid JSON attribute types in: " + edgeString +
+            " | Error: " + std::string(ex.what()));
+    } catch (const json::out_of_range &ex) {
+        // Missing fields like "source" or "destination"
+        incremental_localstore_logger.error(
+            "JSON out-of-range error: Missing required keys in: " + edgeString +
+            " | Error: " + std::string(ex.what()));
+    } catch (const std::exception &ex) {
+        // All other standard errors (filesystem errors, memory issues, etc.)
+        incremental_localstore_logger.error(
+            "Unhandled exception while processing edge data: " + edgeString +
+            " | Error: " + std::string(ex.what()));
+    } catch (...) {
+        // Non-standard exceptions
+        incremental_localstore_logger.error(
+            "Unknown fatal error while processing: " + edgeString);
     }
-
-    auto sourceJson = edgeJson["source"];
-    auto destinationJson = edgeJson["destination"];
-
-    std::string sId = std::string(sourceJson["id"]);
-    std::string dId = std::string(destinationJson["id"]);
-
-    bool isLocal = false;
-    if (edgeJson["EdgeType"] == "Local") {
-      isLocal = true;
-    }
-
-    RelationBlock* newRelation;
-    if (isLocal) {
-      newRelation = this->nm->addLocalEdge({sId, dId});
-    } else {
-      newRelation = this->nm->addCentralEdge({sId, dId});
-    }
-    if (!newRelation) {
-      return;
-    }
-
-    if (isLocal) {
-      addLocalEdgeProperties(newRelation, edgeJson);
-    } else {
-      addCentralEdgeProperties(newRelation, edgeJson);
-    }
-
-    addSourceProperties(newRelation, sourceJson);
-    addDestinationProperties(newRelation, destinationJson);
-    incremental_localstore_logger.debug("Edge (" + sId + ", " + dId +
-                                        ") Added successfully!");
-  } catch (const json::parse_error &ex) {
-    // JSON syntax errors
-    incremental_localstore_logger.error(
-        "JSON parse error while processing edge string: " + edgeString +
-        " | Error: " + std::string(ex.what()));
-  }
-  catch (const json::type_error &ex) {
-    // Wrong JSON types (e.g., expecting string but got int)
-    incremental_localstore_logger.error(
-        "JSON type error: Invalid JSON attribute types in: " + edgeString +
-        " | Error: " + std::string(ex.what()));
-  }
-  catch (const json::out_of_range &ex) {
-    // Missing fields like "source" or "destination"
-    incremental_localstore_logger.error(
-        "JSON out-of-range error: Missing required keys in: " + edgeString +
-        " | Error: " + std::string(ex.what()));
-  }
-  catch (const std::exception &ex) {
-    // All other standard errors (filesystem errors, memory issues, etc.)
-    incremental_localstore_logger.error(
-        "Unhandled exception while processing edge data: " + edgeString +
-        " | Error: " + std::string(ex.what()));
-  }
-  catch (...) {
-    // Non-standard exceptions
-    incremental_localstore_logger.error(
-        "Unknown fatal error while processing: " + edgeString);
-  }
 }
 
 void JasmineGraphIncrementalLocalStore::addLocalEdge(std::string edge) {

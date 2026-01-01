@@ -33,8 +33,8 @@ class StreamHandler {
     cppkafka::Message pollMessage();
     bool isErrorInMessage(const cppkafka::Message &msg);
     bool isEndOfStream(const cppkafka::Message &msg);
-     std::string resolveOperationType(const nlohmann::json &edgeJson) const;
-     std::string resolveOperationTimestamp(const nlohmann::json &edgeJson) const;
+    std::string resolveOperationType(const nlohmann::json &edgeJson) const;
+    std::string resolveOperationTimestamp(const nlohmann::json &edgeJson) const;
     Partitioner graphPartitioner;
     int  graphId;
  private:

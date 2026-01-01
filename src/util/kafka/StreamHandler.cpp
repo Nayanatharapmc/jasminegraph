@@ -90,12 +90,12 @@ void StreamHandler::listen_to_kafka_topic() {
         string data(msg.get_payload());
         auto edgeJson = json::parse(data);
 
-    auto prop = edgeJson["properties"];
-    prop["graphId"] = to_string(this->graphId);
-    std::string operationType = resolveOperationType(edgeJson);
-    std::string operationTimestamp = resolveOperationTimestamp(edgeJson);
-    prop["operationType"] = operationType;
-    prop["operationTimestamp"] = operationTimestamp;
+        auto prop = edgeJson["properties"];
+        prop["graphId"] = to_string(this->graphId);
+        std::string operationType = resolveOperationType(edgeJson);
+        std::string operationTimestamp = resolveOperationTimestamp(edgeJson);
+        prop["operationType"] = operationType;
+        prop["operationTimestamp"] = operationTimestamp;
         auto sourceJson = edgeJson["source"];
         auto destinationJson = edgeJson["destination"];
         string sId = std::string(sourceJson["id"]);
@@ -109,8 +109,8 @@ void StreamHandler::listen_to_kafka_topic() {
         obj["source"] = sourceJson;
         obj["destination"] = destinationJson;
         obj["properties"] = prop;
-    obj["operationType"] = operationType;
-    obj["operationTimestamp"] = operationTimestamp;
+        obj["operationType"] = operationType;
+        obj["operationTimestamp"] = operationTimestamp;
         long part_s = partitionedEdge[0].second;
         long part_d = partitionedEdge[1].second;
         int n_workers = atoi((Utils::getJasmineGraphProperty("org.jasminegraph.server.nworkers")).c_str());
