@@ -857,11 +857,8 @@ std::map<std::string, char*> RelationBlock::getAllProperties() {
         char* copiedValue = new char[PropertyEdgeLink::MAX_VALUE_SIZE];
         std::strncpy(copiedValue, current->value, PropertyEdgeLink::MAX_VALUE_SIZE);
         allProperties.insert({current->name, copiedValue});
-        PropertyEdgeLink* temp = current->next();
-        delete current;  // To prevent memory leaks
-        current = temp;
+        current = current->next();
     }
-    delete current;
     return allProperties;
 }
 
@@ -870,11 +867,8 @@ std::map<std::string, std::string> RelationBlock::getAllMetaProperties() {
     MetaPropertyEdgeLink* current = this->getMetaPropertyHead();
     while (current) {
         allMetaProperties[current->name] = std::string(current->value);
-        MetaPropertyEdgeLink* temp = current->next();
-        delete current;
-        current = temp;
+        current = current->next();
     }
-    delete current;
     return allMetaProperties;
 }
 
