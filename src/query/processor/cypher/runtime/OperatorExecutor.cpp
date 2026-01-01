@@ -184,7 +184,7 @@ void OperatorExecutor::AllNodeScan(SharedBuffer &buffer, std::string jsonPlan, G
         }
 
         json data;
-        string variable = query["variables"];
+        string variable = query["variable"];
         data[variable] = nodeData;
         buffer.add(data.dump());
         nodeCount++;
@@ -213,22 +213,13 @@ void OperatorExecutor::NodeScanByLabel(SharedBuffer &buffer, std::string jsonPla
         }
         if (!populateNodeJson(node, nodeData, temporalConstraints, partitionKey)) {
             continue;
-                delete[] value;  // Free each allocated char* array
-            }
-            properties.clear();
-
-            json data;
-            string variable = query["variable"];
-            data[variable] = nodeData;
-            buffer.add(data.dump());
-            nodeCount++;
->>>>>>> master
         }
 
         json data;
         string variable = query["variable"];
         data[variable] = nodeData;
         buffer.add(data.dump());
+        nodeCount++;
     }
     OpenTelemetryUtil::addSpanAttribute("nodes.found", std::to_string(nodeCount));
     buffer.add("-1");
@@ -292,12 +283,8 @@ void OperatorExecutor::UndirectedRelationshipTypeScan(SharedBuffer &buffer, std:
     OTEL_TRACE_OPERATION("UndirectedRelationshipTypeScan");
 
     json query = json::parse(jsonPlan);
-<<<<<<< HEAD
     TemporalConstraints temporalConstraints = TemporalQueryFilter::fromJson(query);
-=======
     OpenTelemetryUtil::addSpanAttribute("relationship.type", query["relType"].get<std::string>());
-
->>>>>>> master
     NodeManager nodeManager(gc);
 
     const std::string& dbPrefix = nodeManager.getDbPrefix();
