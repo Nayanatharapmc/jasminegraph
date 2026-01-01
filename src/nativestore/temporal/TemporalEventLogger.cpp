@@ -1,5 +1,5 @@
 /**
-Copyright 2024 JasmineGraph Team
+Copyright 2025 JasmineGraph Team
 Licensed under the Apache License, Version 2.0 (the "License");
 you may not use this file except in compliance with the License.
 You may obtain a copy of the License at
@@ -37,11 +37,11 @@ TemporalEventLogger::TemporalEventLogger(const std::string& dbPrefix)
       indexFilePath(dbPrefix + "_temporal_index.db") {}
 
 void TemporalEventLogger::log(const TemporalEdgeEvent& event) const {
-    std::ofstream outfile;
     auto metadata = event.toJson();
     std::string serialized = metadata.dump();
 
     std::lock_guard<std::mutex> guard(logMutex);
+    std::ofstream outfile;
     outfile.open(logFilePath, std::ios::out | std::ios::app);
 
     if (!outfile.is_open()) {
@@ -50,6 +50,7 @@ void TemporalEventLogger::log(const TemporalEdgeEvent& event) const {
     }
 
     outfile << serialized << std::endl;
+    outfile.close();
 }
 
 std::string TemporalEventLogger::getLogFilePath() const {
