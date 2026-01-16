@@ -112,7 +112,8 @@ void InstanceStreamHandler::handleLocalEdge(std::string edge, std::string graphI
         // append mode
     }
     JasmineGraphIncrementalLocalStore* localStore = incrementalLocalStoreMap[graphIdentifier];
-    localStore->addLocalEdge(edge);
+    // Use addEdgeFromString() to enable temporal logging (see TEMPORAL_DATA_FLOW.md Phase 3.1)
+    localStore->addEdgeFromString(edge);
 }
 
 void InstanceStreamHandler::handleCentralEdge(std::string edge, std::string graphId,
@@ -123,5 +124,6 @@ void InstanceStreamHandler::handleCentralEdge(std::string edge, std::string grap
             isEmbed);  // append mode
     }
     JasmineGraphIncrementalLocalStore* localStore = incrementalLocalStoreMap[graphIdentifier];
-    localStore->addCentralEdge(edge);
+    // Use addEdgeFromString() to enable temporal logging (see TEMPORAL_DATA_FLOW.md Phase 3.1)
+    localStore->addEdgeFromString(edge);
 }
