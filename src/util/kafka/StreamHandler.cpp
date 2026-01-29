@@ -61,6 +61,7 @@ bool StreamHandler::isEndOfStream(const cppkafka::Message &msg) {
 }
 
 void StreamHandler::listen_to_kafka_topic() {
+    stream_handler_logger.info("Starting Kafka stream listener for graphId=" + std::to_string(graphId));
     // get workers
     JasmineGraphServer *server = JasmineGraphServer::getInstance();
     std::vector<JasmineGraphServer::worker> workers = server->workers(workerClients.size());
@@ -88,14 +89,25 @@ void StreamHandler::listen_to_kafka_topic() {
             continue;
         }
         string data(msg.get_payload());
+        stream_handler_logger.debug("Received Kafka payload: " + data);
         auto edgeJson = json::parse(data);
 
-        auto prop = edgeJson["properties"];
+        if (!edgeJson.contains("source") || !edgeJson.contains("destination")) {
+            stream_handler_logger.error("Invalid edge payload: missing source/destination. Payload=" + data);
+            continue;
+        }
+
+        json prop = edgeJson.contains("properties") ? edgeJson["properties"] : json::object();
+        if (!edgeJson.contains("properties")) {
+            stream_handler_logger.warn("Edge payload missing properties. Creating empty properties object.");
+        }
         prop["graphId"] = to_string(this->graphId);
         std::string operationType = resolveOperationType(edgeJson);
         std::string operationTimestamp = resolveOperationTimestamp(edgeJson);
         prop["operationType"] = operationType;
         prop["operationTimestamp"] = operationTimestamp;
+        stream_handler_logger.debug("Resolved operationType=" + operationType + " operationTimestamp=" +
+                                    operationTimestamp);
         auto sourceJson = edgeJson["source"];
         auto destinationJson = edgeJson["destination"];
         string sId = std::string(sourceJson["id"]);
@@ -117,31 +129,45 @@ void StreamHandler::listen_to_kafka_topic() {
         long temp_s = part_s % n_workers;
         long temp_d = part_d % n_workers;
 
+        stream_handler_logger.debug("Partitioned edge: srcPid=" + std::to_string(part_s) +
+                        " dstPid=" + std::to_string(part_d) +
+                        " workerSrc=" + std::to_string(temp_s) +
+                        " workerDst=" + std::to_string(temp_d));
+
         // Storing Node block
         if (part_s == part_d) {
             obj["EdgeType"] = "Local";
             obj["PID"] = part_s;
             workerClients.at(temp_s)->publish(obj.dump());
+            stream_handler_logger.debug("Published Local edge to worker " + std::to_string(temp_s) +
+                                        " PID=" + std::to_string(part_s));
         } else {
             obj["EdgeType"] = "Central";
             obj["PID"] = part_s;
             workerClients.at(temp_s)->publish(obj.dump());
+            stream_handler_logger.debug("Published Central edge to worker " + std::to_string(temp_s) +
+                                        " PID=" + std::to_string(part_s));
             obj["PID"] = part_d;
             workerClients.at(temp_d)->publish(obj.dump());
+            stream_handler_logger.debug("Published Central edge to worker " + std::to_string(temp_d) +
+                                        " PID=" + std::to_string(part_d));
         }
     }
     graphPartitioner.updateMetaDB();
     graphPartitioner.printStats();
+    stream_handler_logger.info("Kafka stream listener finished for graphId=" + std::to_string(graphId));
 }
 
 std::string StreamHandler::resolveOperationType(const json &edgeJson) const {
     static const std::unordered_set<std::string> allowedOps = {"ADD", "DELETE", "UPDATE"};
     std::string defaultOp = "ADD";
     if (!edgeJson.contains("operationType") || !edgeJson["operationType"].is_string()) {
+        stream_handler_logger.debug("operationType field not found or is not a string. Using default operation type: " + defaultOp);
         return defaultOp;
     }
     std::string op = Utils::trim_copy(edgeJson["operationType"].get<std::string>());
     std::transform(op.begin(), op.end(), op.begin(), ::toupper);
+    stream_handler_logger.debug("Resolved operation type: " + op);
     if (allowedOps.find(op) == allowedOps.end()) {
         stream_handler_logger.warn("Unsupported operation type '" + op + "' received. Falling back to ADD");
         return defaultOp;
@@ -151,10 +177,16 @@ std::string StreamHandler::resolveOperationType(const json &edgeJson) const {
 
 std::string StreamHandler::resolveOperationTimestamp(const json &edgeJson) const {
     if (edgeJson.contains("operationTimestamp") && edgeJson["operationTimestamp"].is_string()) {
-        return edgeJson["operationTimestamp"].get<std::string>();
+        std::string timestamp = edgeJson["operationTimestamp"].get<std::string>();
+        stream_handler_logger.debug("Using operationTimestamp from edge JSON: " + timestamp);
+        return timestamp;
     }
     if (edgeJson.contains("timestamp") && edgeJson["timestamp"].is_string()) {
-        return edgeJson["timestamp"].get<std::string>();
+        std::string timestamp = edgeJson["timestamp"].get<std::string>();
+        stream_handler_logger.debug("Using timestamp from edge JSON: " + timestamp);
+        return timestamp;
     }
-    return Utils::getCurrentTimestamp();
+    std::string currentTimestamp = Utils::getCurrentTimestamp();
+    stream_handler_logger.debug("No timestamp found in edge JSON. Using current timestamp: " + currentTimestamp);
+    return currentTimestamp;
 }

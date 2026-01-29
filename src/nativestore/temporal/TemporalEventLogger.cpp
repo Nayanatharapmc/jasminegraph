@@ -18,6 +18,7 @@ limitations under the License.
 #include <sys/stat.h>
 
 #include "TemporalConstants.h"
+#include "../../util/Utils.h"
 
 static Logger temporal_event_logger;
 
@@ -40,6 +41,13 @@ void TemporalEventLogger::log(const TemporalEdgeEvent& event) const {
     auto metadata = event.toJson();
     std::string serialized = metadata.dump();
 
+    std::string parentDir;
+    size_t lastSeparator = logFilePath.find_last_of("/\\");
+    if (lastSeparator != std::string::npos) {
+        parentDir = logFilePath.substr(0, lastSeparator);
+        Utils::createDirectory(parentDir);
+    }
+
     std::lock_guard<std::mutex> guard(logMutex);
     std::ofstream outfile;
     outfile.open(logFilePath, std::ios::out | std::ios::app);
@@ -48,6 +56,8 @@ void TemporalEventLogger::log(const TemporalEdgeEvent& event) const {
         temporal_event_logger.error("Failed to open temporal log file: " + logFilePath);
         return;
     }
+
+    temporal_event_logger.info("Writing temporal event to " + logFilePath);
 
     outfile << serialized << std::endl;
     outfile.close();

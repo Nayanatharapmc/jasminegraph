@@ -111,22 +111,63 @@ std::pair<std::string, unsigned int> JasmineGraphIncrementalLocalStore::getIDs(
 
 void JasmineGraphIncrementalLocalStore::addEdgeFromString(std::string edgeString) {
     try {
+        // ============ PRE-PROCESSING: Log input data structure ============
+        incremental_localstore_logger.info("============ ADDEDGE START ============");
+        incremental_localstore_logger.info("Raw edge string: " + edgeString);
+        
         auto edgeJson = json::parse(edgeString);
-        incremental_localstore_logger.info(edgeString);
+        incremental_localstore_logger.info("Parsed JSON structure successfully");
+        
+        // Log source/destination IDs
+        if (edgeJson.contains("source") && edgeJson.contains("destination")) {
+            std::string sourceId = edgeJson["source"].contains("id") ? 
+                edgeJson["source"]["id"].get<std::string>() : "MISSING";
+            std::string destId = edgeJson["destination"].contains("id") ? 
+                edgeJson["destination"]["id"].get<std::string>() : "MISSING";
+            incremental_localstore_logger.debug("Source ID: " + sourceId + " | Destination ID: " + destId);
+        }
+        
+        // Log partition IDs if present
+        if (edgeJson.contains("source") && edgeJson.contains("destination")) {
+            std::string sourcePid = edgeJson["source"].contains("pid") ? 
+                std::to_string(edgeJson["source"]["pid"].get<int>()) : "MISSING";
+            std::string destPid = edgeJson["destination"].contains("pid") ? 
+                std::to_string(edgeJson["destination"]["pid"].get<int>()) : "MISSING";
+            incremental_localstore_logger.debug("Source PID: " + sourcePid + " | Destination PID: " + destPid);
+        }
+        
+        // Log properties
+        if (edgeJson.contains("properties")) {
+            incremental_localstore_logger.debug("Edge properties count: " + 
+                std::to_string(edgeJson["properties"].size()));
+        }
 
+        // ============ METADATA RESOLUTION ============
         std::string operationType = resolveOperationType(edgeJson);
         std::string operationTimestamp = resolveOperationTimestamp(edgeJson);
+        incremental_localstore_logger.info("Resolved operationType: " + operationType + 
+                                          " | operationTimestamp: " + operationTimestamp);
+        
         bool handled = false;
 
+        // ============ ROUTING & PROCESSING ============
         if (edgeJson.contains("isNode")) {
+            incremental_localstore_logger.info("Processing as NODE operation");
             handled = handleNodeOperation(edgeJson, operationType, operationTimestamp);
+            incremental_localstore_logger.debug("Node operation handled: " + std::string(handled ? "SUCCESS" : "FAILED"));
         } else {
             bool localEdge = isLocalEdge(edgeJson);
+            std::string edgeType = localEdge ? "LOCAL" : "CENTRAL";
+            incremental_localstore_logger.info("Processing as EDGE operation (Type: " + edgeType + ")");
+            
             if (operationType == TemporalConstants::OP_ADD) {
+                incremental_localstore_logger.debug("Executing ADD operation for " + edgeType + " edge");
                 handled = handleEdgeAddition(edgeJson, operationType, operationTimestamp);
             } else if (operationType == TemporalConstants::OP_DELETE) {
+                incremental_localstore_logger.debug("Executing DELETE operation for " + edgeType + " edge");
                 handled = handleEdgeDeletion(edgeJson, localEdge, operationType, operationTimestamp);
             } else if (operationType == TemporalConstants::OP_UPDATE) {
+                incremental_localstore_logger.debug("Executing UPDATE operation for " + edgeType + " edge");
                 handled = handleEdgeUpdate(edgeJson, localEdge, operationType, operationTimestamp);
             } else {
                 incremental_localstore_logger.warn("Unsupported operation type '" + operationType +
@@ -134,13 +175,21 @@ void JasmineGraphIncrementalLocalStore::addEdgeFromString(std::string edgeString
                 handled = handleEdgeAddition(edgeJson, DEFAULT_OPERATION, operationTimestamp);
                 operationType = DEFAULT_OPERATION;
             }
+            
+            incremental_localstore_logger.debug("Edge operation (" + operationType + ", " + edgeType + 
+                                               ") handled: " + std::string(handled ? "SUCCESS" : "FAILED"));
         }
 
+        // ============ POST-PROCESSING: Log temporal event ============
         logTemporalEvent(edgeJson, operationType, operationTimestamp);
+        incremental_localstore_logger.debug("Temporal event logged for operation: " + operationType);
 
+        // ============ FINAL STATUS ============
         if (!handled) {
             incremental_localstore_logger.warn("Failed to handle operation '" + operationType +
                                               "' for payload: " + edgeString);
+        } else {
+            incremental_localstore_logger.info("============ ADDEDGE SUCCESS ============");
         }
     } catch (const json::parse_error &ex) {
         // JSON syntax errors
@@ -474,8 +523,12 @@ std::string JasmineGraphIncrementalLocalStore::resolveOperationTimestamp(const j
 void JasmineGraphIncrementalLocalStore::logTemporalEvent(const json& edgeJson, const std::string& operationType,
                                                          const std::string& operationTimestamp) {
     if (!temporalLogger) {
+    incremental_localstore_logger.error("Temporal logger not initialized; skipping temporal event log.");
         return;
     }
+  incremental_localstore_logger.info("Logging temporal event. operationType=" + operationType +
+                     " operationTimestamp=" + operationTimestamp +
+                     " logFile=" + temporalLogger->getLogFilePath());
     TemporalEdgeEvent event{operationType, operationTimestamp, edgeJson};
     temporalLogger->log(event);
 }
