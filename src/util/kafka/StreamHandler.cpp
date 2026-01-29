@@ -89,7 +89,7 @@ void StreamHandler::listen_to_kafka_topic() {
             continue;
         }
         string data(msg.get_payload());
-        stream_handler_logger.debug("Received Kafka payload: " + data);
+        stream_handler_logger.info("Received Kafka payload bytes=" + std::to_string(data.size()));
         auto edgeJson = json::parse(data);
 
         if (!edgeJson.contains("source") || !edgeJson.contains("destination")) {
@@ -106,8 +106,8 @@ void StreamHandler::listen_to_kafka_topic() {
         std::string operationTimestamp = resolveOperationTimestamp(edgeJson);
         prop["operationType"] = operationType;
         prop["operationTimestamp"] = operationTimestamp;
-        stream_handler_logger.debug("Resolved operationType=" + operationType + " operationTimestamp=" +
-                                    operationTimestamp);
+        stream_handler_logger.info("Resolved operationType=" + operationType + " operationTimestamp=" +
+                       operationTimestamp);
         auto sourceJson = edgeJson["source"];
         auto destinationJson = edgeJson["destination"];
         string sId = std::string(sourceJson["id"]);
@@ -129,28 +129,28 @@ void StreamHandler::listen_to_kafka_topic() {
         long temp_s = part_s % n_workers;
         long temp_d = part_d % n_workers;
 
-        stream_handler_logger.debug("Partitioned edge: srcPid=" + std::to_string(part_s) +
-                        " dstPid=" + std::to_string(part_d) +
-                        " workerSrc=" + std::to_string(temp_s) +
-                        " workerDst=" + std::to_string(temp_d));
+        stream_handler_logger.info("Partitioned edge: srcPid=" + std::to_string(part_s) +
+                       " dstPid=" + std::to_string(part_d) +
+                       " workerSrc=" + std::to_string(temp_s) +
+                       " workerDst=" + std::to_string(temp_d));
 
         // Storing Node block
         if (part_s == part_d) {
             obj["EdgeType"] = "Local";
             obj["PID"] = part_s;
             workerClients.at(temp_s)->publish(obj.dump());
-            stream_handler_logger.debug("Published Local edge to worker " + std::to_string(temp_s) +
-                                        " PID=" + std::to_string(part_s));
+            stream_handler_logger.info("Published Local edge to worker " + std::to_string(temp_s) +
+                                       " PID=" + std::to_string(part_s));
         } else {
             obj["EdgeType"] = "Central";
             obj["PID"] = part_s;
             workerClients.at(temp_s)->publish(obj.dump());
-            stream_handler_logger.debug("Published Central edge to worker " + std::to_string(temp_s) +
-                                        " PID=" + std::to_string(part_s));
+            stream_handler_logger.info("Published Central edge to worker " + std::to_string(temp_s) +
+                                       " PID=" + std::to_string(part_s));
             obj["PID"] = part_d;
             workerClients.at(temp_d)->publish(obj.dump());
-            stream_handler_logger.debug("Published Central edge to worker " + std::to_string(temp_d) +
-                                        " PID=" + std::to_string(part_d));
+            stream_handler_logger.info("Published Central edge to worker " + std::to_string(temp_d) +
+                                       " PID=" + std::to_string(part_d));
         }
     }
     graphPartitioner.updateMetaDB();

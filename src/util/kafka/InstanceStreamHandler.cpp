@@ -55,8 +55,8 @@ void InstanceStreamHandler::handleRequest(const std::string& nodeString) {
 
     queues[graphIdentifier].push(nodeString);
     cond_vars[graphIdentifier].notify_one();
-    instance_stream_logger.debug("Queued message for " + graphIdentifier +
-                                 " (queue size=" + std::to_string(queues[graphIdentifier].size()) + ")");
+    instance_stream_logger.info("Queued message for " + graphIdentifier +
+                                " (queue size=" + std::to_string(queues[graphIdentifier].size()) + ")");
 }
 
 void InstanceStreamHandler::threadFunction(const std::string& nodeString) {
@@ -90,7 +90,7 @@ void InstanceStreamHandler::threadFunction(const std::string& nodeString) {
             nodeString = queues[graphIdentifier].front();
             queues[graphIdentifier].pop();
         }
-        instance_stream_logger.debug("Processing message for " + graphIdentifier);
+        instance_stream_logger.info("Processing message for " + graphIdentifier);
         localStore->addEdgeFromString(nodeString);
     }
     instance_stream_logger.info("Stream worker thread stopped for " + graphIdentifier);
@@ -116,7 +116,7 @@ InstanceStreamHandler::loadStreamingStore(std::string graphId, std::string parti
     instance_stream_logger.info("###INSTANCE### Loading streaming Store for" + graphIdentifier
                                + " : Started");
     std::string folderLocation = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.datafolder");
-    instance_stream_logger.debug("Streaming store data folder: " + folderLocation);
+    instance_stream_logger.info("Streaming store data folder: " + folderLocation);
     auto *jasmineGraphStreamingLocalStore = new JasmineGraphIncrementalLocalStore(
                                      stoi(graphId), stoi(partitionId), dbFilesOpenMode, isEmbed);
     graphDBMapStreamingStores.insert(std::make_pair(graphIdentifier, jasmineGraphStreamingLocalStore));
@@ -132,7 +132,7 @@ void InstanceStreamHandler::handleLocalEdge(std::string edge, std::string graphI
         // append mode
     }
     JasmineGraphIncrementalLocalStore* localStore = incrementalLocalStoreMap[graphIdentifier];
-    instance_stream_logger.debug("Handling local edge for " + graphIdentifier);
+    instance_stream_logger.info("Handling local edge for " + graphIdentifier);
     // Use addEdgeFromString() to enable temporal logging (see TEMPORAL_DATA_FLOW.md Phase 3.1)
     localStore->addEdgeFromString(edge);
 }
@@ -145,7 +145,7 @@ void InstanceStreamHandler::handleCentralEdge(std::string edge, std::string grap
             isEmbed);  // append mode
     }
     JasmineGraphIncrementalLocalStore* localStore = incrementalLocalStoreMap[graphIdentifier];
-    instance_stream_logger.debug("Handling central edge for " + graphIdentifier);
+    instance_stream_logger.info("Handling central edge for " + graphIdentifier);
     // Use addEdgeFromString() to enable temporal logging (see TEMPORAL_DATA_FLOW.md Phase 3.1)
     localStore->addEdgeFromString(edge);
 }
