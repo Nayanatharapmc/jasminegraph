@@ -1087,12 +1087,29 @@ bool Utils::fileExistsWithReadPermission(const string &path) { return access(pat
 
 std::fstream *Utils::openFile(const string &path, std::ios_base::openmode mode) {
     if (!fileExistsWithReadPermission(path)) {
+        // Extract parent directory from path
+        size_t lastSlash = path.find_last_of("/");
+        if (lastSlash != string::npos) {
+            string parentDir = path.substr(0, lastSlash);
+            // Create parent directory if it doesn't exist
+            if (!fileExists(parentDir)) {
+                util_logger.info("Creating parent directory: " + parentDir);
+                createDirectory(parentDir);
+            }
+        }
         // Create the file if it doesn't exist
         std::ofstream dummyFile(path, std::ios::out | std::ios::binary);
+        if (!dummyFile.is_open()) {
+            util_logger.error("Failed to create file: " + path);
+        }
         dummyFile.close();
     }
     // Now open the file in the desired mode
-    return new std::fstream(path, mode | std::ios::binary);
+    std::fstream *fileStream = new std::fstream(path, mode | std::ios::binary);
+    if (!fileStream->is_open()) {
+        util_logger.error("Failed to open file: " + path);
+    }
+    return fileStream;
 }
 
 bool Utils::uploadFileToWorker(std::string host, int port, int dataPort, int graphID, std::string filePath,

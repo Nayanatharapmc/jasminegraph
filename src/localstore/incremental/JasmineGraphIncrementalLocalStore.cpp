@@ -44,6 +44,22 @@ namespace {
           return false;
       }
   }
+
+  // Helper function to safely extract ID as string from JSON (handles both string and numeric IDs)
+  std::string getIdAsString(const json& obj) {
+      if (!obj.contains("id")) {
+          return "";
+      }
+      const auto& idField = obj["id"];
+      if (idField.is_string()) {
+          return idField.get<std::string>();
+      } else if (idField.is_number_integer()) {
+          return std::to_string(idField.get<long long>());
+      } else if (idField.is_number()) {
+          return std::to_string(static_cast<long long>(idField.get<double>()));
+      }
+      return "";
+  }
 }  // namespace
 
 JasmineGraphIncrementalLocalStore::JasmineGraphIncrementalLocalStore(
@@ -379,14 +395,14 @@ void JasmineGraphIncrementalLocalStore::addSourceProperties(
       if (this->embedNode) {
         std::string nodeText = textForEmbedding.str();
         if (!nodeText.empty()) {
-          if (faissStore->getEmbeddingById(sourceJson["id"]).size() == 0) {
+          std::string sourceId = getIdAsString(sourceJson);
+          if (faissStore->getEmbeddingById(sourceId).size() == 0) {
             incremental_localstore_logger.error(
-                "Node with ID " + sourceJson["id"].get<std::string>() +
+                "Node with ID " + sourceId +
                 " found . Skipping ");
             return;
           }
-          EmbeddingRequest request = {sourceJson["id"].get<std::string>(),
-                                      nodeText};
+          EmbeddingRequest request = {sourceId, nodeText};
           embedding_requests->emplace_back(request);
         }
       }
@@ -422,14 +438,14 @@ void JasmineGraphIncrementalLocalStore::addDestinationProperties(
       if (this->embedNode) {
         std::string nodeText = textForEmbedding.str();
         if (!nodeText.empty()) {
-          if (faissStore->getEmbeddingById(destinationJson["id"]).empty()) {
+          std::string destId = getIdAsString(destinationJson);
+          if (faissStore->getEmbeddingById(destId).empty()) {
             incremental_localstore_logger.error(
-                "Node with ID " + destinationJson["id"].get<std::string>() +
+                "Node with ID " + destId +
                 " found . Skipping ");
             return;
           }
-          EmbeddingRequest request = {destinationJson["id"].get<std::string>(),
-                                      nodeText};
+          EmbeddingRequest request = {destId, nodeText};
           embedding_requests->emplace_back(request);
         }
       }
@@ -452,9 +468,21 @@ void JasmineGraphIncrementalLocalStore::addNodeMetaProperty(
 void JasmineGraphIncrementalLocalStore::addRelationMetaProperty(
     RelationBlock* relationBlock, std::string propertyKey,
     std::string propertyValue) {
+  if (!relationBlock) {
+    incremental_localstore_logger.error("[addRelationMetaProperty] relationBlock is nullptr, cannot add meta property: " + propertyKey);
+    return;
+  }
+  
+  incremental_localstore_logger.debug("[addRelationMetaProperty] Adding key=" + propertyKey + ", value=" + propertyValue);
+  
   char meta[MetaPropertyEdgeLink::MAX_VALUE_SIZE] = {};
-  strcpy(meta, propertyValue.c_str());
+  if (propertyValue.length() >= MetaPropertyEdgeLink::MAX_VALUE_SIZE) {
+    incremental_localstore_logger.warn("[addRelationMetaProperty] Property value too long, will be truncated: " + propertyKey + "=" + propertyValue);
+  }
+  std::strncpy(meta, propertyValue.c_str(), MetaPropertyEdgeLink::MAX_VALUE_SIZE - 1);
+  meta[MetaPropertyEdgeLink::MAX_VALUE_SIZE - 1] = '\0';
   relationBlock->addMetaProperty(propertyKey, &meta[0]);
+  incremental_localstore_logger.debug("[addRelationMetaProperty] Successfully added meta property: " + propertyKey);
 }
 
 std::string JasmineGraphIncrementalLocalStore::resolveOperationType(const json& edgeJson) const {
@@ -621,8 +649,8 @@ bool JasmineGraphIncrementalLocalStore::handleEdgeAddition(const json& edgeJson,
                                                            const std::string& operationTimestamp) {
     auto sourceJson = edgeJson["source"];
     auto destinationJson = edgeJson["destination"];
-    std::string sId = sourceJson["id"].get<std::string>();
-    std::string dId = destinationJson["id"].get<std::string>();
+    std::string sId = getIdAsString(sourceJson);
+    std::string dId = getIdAsString(destinationJson);
 
     bool localEdge = isLocalEdge(edgeJson);
     RelationBlock* relation = localEdge ? this->nm->addLocalEdge({sId, dId})
@@ -640,7 +668,17 @@ bool JasmineGraphIncrementalLocalStore::handleEdgeAddition(const json& edgeJson,
 
     addSourceProperties(relation, sourceJson);
     addDestinationProperties(relation, destinationJson);
-    attachTemporalMeta(relation, operationType, operationTimestamp);
+    
+    incremental_localstore_logger.info("[handleEdgeAddition] BEFORE attachTemporalMeta: sId=" + sId + ", dId=" + dId + 
+                                      ", operationType=" + operationType + ", operationTimestamp=" + operationTimestamp);
+    try {
+        attachTemporalMeta(relation, operationType, operationTimestamp);
+        incremental_localstore_logger.info("[handleEdgeAddition] AFTER attachTemporalMeta: SUCCESS");
+    } catch (const std::exception& e) {
+        incremental_localstore_logger.error("[handleEdgeAddition] attachTemporalMeta FAILED: " + std::string(e.what()));
+        throw;
+    }
+    
     incremental_localstore_logger.debug("Edge (" + sId + ", " + dId + ") processed as ADD operation.");
     return true;
 }
@@ -650,8 +688,8 @@ bool JasmineGraphIncrementalLocalStore::handleEdgeUpdate(const json& edgeJson, b
                                                          const std::string& operationTimestamp) {
     auto sourceJson = edgeJson["source"];
     auto destinationJson = edgeJson["destination"];
-    std::string sId = sourceJson["id"].get<std::string>();
-    std::string dId = destinationJson["id"].get<std::string>();
+    std::string sId = getIdAsString(sourceJson);
+    std::string dId = getIdAsString(destinationJson);
 
     RelationBlock* relation = findRelation(sId, dId, isLocal);
     if (!relation) {
@@ -668,7 +706,17 @@ bool JasmineGraphIncrementalLocalStore::handleEdgeUpdate(const json& edgeJson, b
 
     addSourceProperties(relation, sourceJson);
     addDestinationProperties(relation, destinationJson);
-    attachTemporalMeta(relation, operationType, operationTimestamp);
+    
+    incremental_localstore_logger.info("[handleEdgeUpdate] BEFORE attachTemporalMeta: sId=" + sId + ", dId=" + dId + 
+                                      ", operationType=" + operationType + ", operationTimestamp=" + operationTimestamp);
+    try {
+        attachTemporalMeta(relation, operationType, operationTimestamp);
+        incremental_localstore_logger.info("[handleEdgeUpdate] AFTER attachTemporalMeta: SUCCESS");
+    } catch (const std::exception& e) {
+        incremental_localstore_logger.error("[handleEdgeUpdate] attachTemporalMeta FAILED: " + std::string(e.what()));
+        throw;
+    }
+    
     incremental_localstore_logger.debug("Edge (" + sId + ", " + dId + ") updated successfully.");
     return true;
 }
@@ -678,8 +726,8 @@ bool JasmineGraphIncrementalLocalStore::handleEdgeDeletion(const json& edgeJson,
                                                            const std::string& operationTimestamp) {
     auto sourceJson = edgeJson["source"];
     auto destinationJson = edgeJson["destination"];
-    std::string sId = sourceJson["id"].get<std::string>();
-    std::string dId = destinationJson["id"].get<std::string>();
+    std::string sId = getIdAsString(sourceJson);
+    std::string dId = getIdAsString(destinationJson);
 
     RelationBlock* relation = findRelation(sId, dId, isLocal);
     if (!relation) {
@@ -718,26 +766,44 @@ void JasmineGraphIncrementalLocalStore::attachTemporalMeta(RelationBlock* relati
                                                            const std::string& operationType,
                                                            const std::string& operationTimestamp) {
     if (!relationBlock) {
+        incremental_localstore_logger.error("[attachTemporalMeta] relationBlock is nullptr, cannot attach temporal metadata");
         return;
     }
-    addRelationMetaProperty(relationBlock, TemporalConstants::LAST_OPERATION, operationType);
-    addRelationMetaProperty(relationBlock, TemporalConstants::LAST_OPERATION_TS, operationTimestamp);
-
-    if (operationType == TemporalConstants::OP_DELETE) {
-        addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_DELETED);
-        addRelationMetaProperty(relationBlock, TemporalConstants::DELETED_AT, operationTimestamp);
-    } else if (operationType == TemporalConstants::OP_ADD) {
-        addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_ACTIVE);
-        addRelationMetaProperty(relationBlock, TemporalConstants::CREATED_AT, operationTimestamp);
-        addRelationMetaProperty(relationBlock, TemporalConstants::PROPERTY_VERSION, "1");
-    } else if (operationType == TemporalConstants::OP_UPDATE) {
-        addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_ACTIVE);
-        addRelationMetaProperty(relationBlock, TemporalConstants::UPDATED_AT, operationTimestamp);
+    
+    incremental_localstore_logger.info("[attachTemporalMeta] ENTRY: operationType=" + operationType + 
+                                      ", operationTimestamp=" + operationTimestamp);
+    
+    try {
+        incremental_localstore_logger.debug("[attachTemporalMeta] Adding LAST_OPERATION=" + operationType);
+        addRelationMetaProperty(relationBlock, TemporalConstants::LAST_OPERATION, operationType);
         
-        // Increment property version
-        auto meta = relationBlock->getAllMetaProperties();
-        auto versionIt = meta.find(TemporalConstants::PROPERTY_VERSION);
-        int version = versionIt != meta.end() ? std::stoi(versionIt->second) + 1 : 1;
-        addRelationMetaProperty(relationBlock, TemporalConstants::PROPERTY_VERSION, std::to_string(version));
+        incremental_localstore_logger.debug("[attachTemporalMeta] Adding LAST_OPERATION_TS=" + operationTimestamp);
+        addRelationMetaProperty(relationBlock, TemporalConstants::LAST_OPERATION_TS, operationTimestamp);
+
+        if (operationType == TemporalConstants::OP_DELETE) {
+            incremental_localstore_logger.debug("[attachTemporalMeta] DELETE operation - adding status and DELETED_AT");
+            addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_DELETED);
+            addRelationMetaProperty(relationBlock, TemporalConstants::DELETED_AT, operationTimestamp);
+        } else if (operationType == TemporalConstants::OP_ADD) {
+            incremental_localstore_logger.debug("[attachTemporalMeta] ADD operation - adding status, CREATED_AT, and version");
+            addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_ACTIVE);
+            addRelationMetaProperty(relationBlock, TemporalConstants::CREATED_AT, operationTimestamp);
+            addRelationMetaProperty(relationBlock, TemporalConstants::PROPERTY_VERSION, "1");
+        } else if (operationType == TemporalConstants::OP_UPDATE) {
+            incremental_localstore_logger.debug("[attachTemporalMeta] UPDATE operation - adding status, UPDATED_AT, and version");
+            addRelationMetaProperty(relationBlock, TemporalConstants::STATUS, TemporalConstants::STATUS_ACTIVE);
+            addRelationMetaProperty(relationBlock, TemporalConstants::UPDATED_AT, operationTimestamp);
+            
+            // Increment property version
+            auto meta = relationBlock->getAllMetaProperties();
+            auto versionIt = meta.find(TemporalConstants::PROPERTY_VERSION);
+            int version = versionIt != meta.end() ? std::stoi(versionIt->second) + 1 : 1;
+            addRelationMetaProperty(relationBlock, TemporalConstants::PROPERTY_VERSION, std::to_string(version));
+        }
+        
+        incremental_localstore_logger.info("[attachTemporalMeta] EXIT: All temporal metadata attached successfully");
+    } catch (const std::exception& e) {
+        incremental_localstore_logger.error("[attachTemporalMeta] Exception while attaching temporal metadata: " + std::string(e.what()));
+        throw;
     }
 }

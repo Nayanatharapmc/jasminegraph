@@ -20,7 +20,7 @@ limitations under the License.
 
 class MetaPropertyEdgeLink {
  public:
-    static const unsigned long MAX_NAME_SIZE = 12;    // Size of a property name in bytes
+    static const unsigned long MAX_NAME_SIZE = 64;    // Size of a property name in bytes
     static const unsigned long MAX_VALUE_SIZE = 180;  // Size of a property value in bytes
     static thread_local unsigned int nextPropertyIndex;            // Next available property block index
     static inline const std::string PARTITION_ID = "pid";
