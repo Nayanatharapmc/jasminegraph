@@ -49,6 +49,7 @@ bool populateNodeJson(NodeBlock* node, json& nodeData, const TemporalConstraints
     }
     nodeData[kPartitionField] = partitionIt->second;
 
+    // Include regular properties
     std::map<std::string, char*> properties = node->getAllProperties();
     for (auto property : properties) {
         nodeData[property.first] = property.second;
@@ -57,6 +58,11 @@ bool populateNodeJson(NodeBlock* node, json& nodeData, const TemporalConstraints
         delete[] value;
     }
     properties.clear();
+    
+    // Include metadata properties (temporal fields)
+    for (const auto& [key, value] : meta) {
+        nodeData[key] = value;
+    }
     return true;
 }
 
@@ -70,6 +76,7 @@ bool loadRelationMetaIfVisible(RelationBlock* relation, const TemporalConstraint
 }
 
 void populateRelationProperties(RelationBlock* relation, json& relationData) {
+    // Include regular properties
     std::map<std::string, char*> relProperties = relation->getAllProperties();
     for (auto property : relProperties) {
         relationData[property.first] = property.second;
@@ -78,6 +85,12 @@ void populateRelationProperties(RelationBlock* relation, json& relationData) {
         delete[] value;
     }
     relProperties.clear();
+    
+    // Include metadata properties (temporal fields)
+    std::map<std::string, std::string> relMetaProperties = relation->getAllMetaProperties();
+    for (const auto& [key, value] : relMetaProperties) {
+        relationData[key] = value;
+    }
 }
 }  // namespace
 std::unordered_map<std::string,

@@ -108,8 +108,15 @@ partitionedEdge Partitioner::ldgPartitioning(std::pair<std::string, std::string>
 }
 
 partitionedEdge Partitioner::hashPartitioning(std::pair<std::string, std::string> edge) {
-    int firstIndex = stoi(edge.first) % this->numberOfPartitions;    // Hash partitioning
-    int secondIndex = stoi(edge.second) % this->numberOfPartitions;  // Hash partitioning
+    auto resolveIndex = [this](const std::string& id) {
+        try {
+            return static_cast<int>(std::stoll(id) % this->numberOfPartitions);
+        } catch (const std::exception&) {
+            return static_cast<int>(std::hash<std::string>{}(id) % this->numberOfPartitions);
+        }
+    };
+    int firstIndex = resolveIndex(edge.first);   // Hash partitioning
+    int secondIndex = resolveIndex(edge.second); // Hash partitioning
 
     if (firstIndex == secondIndex) {
         this->partitions[firstIndex].addEdge(edge, this->isDirect);

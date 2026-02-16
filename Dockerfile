@@ -17,7 +17,6 @@ RUN if [ "$DEBUG" = "true" ]; then apt-get update \
 && apt-get clean; fi
 
 WORKDIR "${JASMINEGRAPH_HOME}"
-COPY ./build.sh ./build.sh
 COPY ./CMakeLists.txt ./CMakeLists.txt
 COPY ./main.h ./main.h
 COPY ./main.cpp ./main.cpp
@@ -25,7 +24,14 @@ COPY ./globals.h ./globals.h
 COPY ./src ./src
 COPY ./globals.h ./src/globals.h
 
-RUN if [ "$DEBUG" = "true" ]; then echo "building in DEBUG mode" && sh build.sh --debug; else sh build.sh; fi
+RUN if [ "$DEBUG" = "true" ]; then \
+		echo "building in DEBUG mode" && \
+		cmake -S . -B build -DCMAKE_BUILD_TYPE=Debug && \
+		cmake --build build -j"$(nproc)"; \
+	else \
+		cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && \
+		cmake --build build -j"$(nproc)"; \
+	fi
 
 COPY ./run-docker.sh ./run-docker.sh
 COPY ./src_python ./src_python

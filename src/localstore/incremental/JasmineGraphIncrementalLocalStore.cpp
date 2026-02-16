@@ -623,7 +623,17 @@ bool JasmineGraphIncrementalLocalStore::handleNodeOperation(const json& nodeJson
         // Increment property version
         auto meta = existingNode->getAllMetaProperties();
         auto versionIt = meta.find(TemporalConstants::PROPERTY_VERSION);
-        int version = versionIt != meta.end() ? std::stoi(versionIt->second) + 1 : 1;
+        int version = 1;
+        if (versionIt != meta.end()) {
+          try {
+            version = std::stoi(versionIt->second) + 1;
+          } catch (const std::exception&) {
+            incremental_localstore_logger.warn(
+                "Invalid PROPERTY_VERSION value '" + versionIt->second + "' for node " + nodeId
+                + ". Resetting to 1.");
+            version = 1;
+          }
+        }
         addNodeMetaProperty(existingNode, TemporalConstants::PROPERTY_VERSION, std::to_string(version));
         
         incremental_localstore_logger.debug("Node " + nodeId + " updated successfully");
@@ -797,7 +807,17 @@ void JasmineGraphIncrementalLocalStore::attachTemporalMeta(RelationBlock* relati
             // Increment property version
             auto meta = relationBlock->getAllMetaProperties();
             auto versionIt = meta.find(TemporalConstants::PROPERTY_VERSION);
-            int version = versionIt != meta.end() ? std::stoi(versionIt->second) + 1 : 1;
+            int version = 1;
+            if (versionIt != meta.end()) {
+              try {
+                version = std::stoi(versionIt->second) + 1;
+              } catch (const std::exception&) {
+                incremental_localstore_logger.warn(
+                    "Invalid PROPERTY_VERSION value '" + versionIt->second
+                    + "' for relation. Resetting to 1.");
+                version = 1;
+              }
+            }
             addRelationMetaProperty(relationBlock, TemporalConstants::PROPERTY_VERSION, std::to_string(version));
         }
         

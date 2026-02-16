@@ -85,9 +85,23 @@ if [ -n "$DEBUG" ]; then
     fi
 else
     if [ $MODE -eq 1 ]; then
-        ./JasmineGraph $PROFILE $MODE $MASTERIP $WORKERS $WORKERIP $ENABLE_NMON
+        if [ -x "${JASMINEGRAPH_HOME}/JasmineGraph" ]; then
+            "${JASMINEGRAPH_HOME}/JasmineGraph" $PROFILE $MODE $MASTERIP $WORKERS $WORKERIP $ENABLE_NMON
+        elif [ -x "${JASMINEGRAPH_HOME}/build/JasmineGraph" ]; then
+            "${JASMINEGRAPH_HOME}/build/JasmineGraph" $PROFILE $MODE $MASTERIP $WORKERS $WORKERIP $ENABLE_NMON
+        else
+            echo "JasmineGraph binary not found in ${JASMINEGRAPH_HOME} or ${JASMINEGRAPH_HOME}/build" >&2
+            exit 1
+        fi
     else
-        ./JasmineGraph $PROFILE $MODE $HOST_NAME $MASTERIP $SERVER_PORT $SERVER_DATA_PORT $ENABLE_NMON
+        if [ -x "${JASMINEGRAPH_HOME}/JasmineGraph" ]; then
+            "${JASMINEGRAPH_HOME}/JasmineGraph" $PROFILE $MODE $HOST_NAME $MASTERIP $SERVER_PORT $SERVER_DATA_PORT $ENABLE_NMON
+        elif [ -x "${JASMINEGRAPH_HOME}/build/JasmineGraph" ]; then
+            "${JASMINEGRAPH_HOME}/build/JasmineGraph" $PROFILE $MODE $HOST_NAME $MASTERIP $SERVER_PORT $SERVER_DATA_PORT $ENABLE_NMON
+        else
+            echo "JasmineGraph binary not found in ${JASMINEGRAPH_HOME} or ${JASMINEGRAPH_HOME}/build" >&2
+            exit 1
+        fi
     fi
 fi
 
