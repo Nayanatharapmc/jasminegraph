@@ -19,6 +19,7 @@ limitations under the License.
 #include "../util/logger/Logger.h"
 #include "RelationBlock.h"
 #include "MetaPropertyLink.h"
+#include "FlushManager.h"
 
 Logger node_block_logger;
 pthread_mutex_t lockSaveNode;
@@ -54,7 +55,7 @@ void NodeBlock::addLabel(char *label) {
                                   sizeof(this->centralEdgeRef) + sizeof(this->edgeRefPID) + sizeof(this->propRef) +
                                   sizeof(this->metaPropRef));
         NodeBlock::nodesDB->write(this->label, sizeof(this->label));
-        NodeBlock::nodesDB->flush();
+        FlushManager::recordWrite(NodeBlock::nodesDB);
     }
 }
 
@@ -76,7 +77,7 @@ void NodeBlock::save() {
     NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->propRef)), sizeof(this->propRef));                // 4
     NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->metaPropRef)), sizeof(this->metaPropRef));        // 4
     NodeBlock::nodesDB->write(this->label, sizeof(this->label));                                                // 18
-    NodeBlock::nodesDB->flush();  // Sync the file with in-memory stream
+    FlushManager::recordWrite(NodeBlock::nodesDB);  // Batched flush
     //    pthread_mutex_unlock(&lockSaveNode);
 
         if (!isSmallLabel) {
@@ -99,7 +100,7 @@ void NodeBlock::addProperty(std::string name, const char* value) {
             NodeBlock::nodesDB->seekp(this->addr +sizeof(this->usage) +sizeof(this->nodeId) + sizeof(this->edgeRef) +
                                       sizeof(this->centralEdgeRef) + sizeof(this->edgeRefPID));
             NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->propRef)), sizeof(this->propRef));
-            NodeBlock::nodesDB->flush();
+            FlushManager::recordWrite(NodeBlock::nodesDB);
             node_block_logger.debug("Updated propRef in DB for node at address: " + std::to_string(this->addr));
         } else {
             node_block_logger.error("Error occurred while adding a new property link to " +
@@ -127,7 +128,7 @@ void NodeBlock::addMetaProperty(std::string name, const char* value) {
             NodeBlock::nodesDB->seekp(this->addr + sizeof(this->usage) + sizeof(this->nodeId) + sizeof(this->edgeRef) +
                                       sizeof(this->centralEdgeRef) + sizeof(this->edgeRefPID) + sizeof(this->propRef));
             NodeBlock::nodesDB->write(reinterpret_cast<char*>(&(this->metaPropRef)), sizeof(this->metaPropRef));
-            NodeBlock::nodesDB->flush();
+            FlushManager::recordWrite(NodeBlock::nodesDB);
             node_block_logger.debug("Updated metaPropRef in DB for node at address: " + std::to_string(this->addr));
         } else {
             node_block_logger.error("Error occurred while adding a new meta property link to " +
@@ -264,7 +265,7 @@ bool NodeBlock::setLocalRelationHead(RelationBlock newRelation) {
                                 std::to_string(edgeReferenceAddress) + " for node " + std::to_string(this->addr));
         return false;
     }
-    NodeBlock::nodesDB->flush();  // Sync the file with in-memory stream
+    FlushManager::recordWrite(NodeBlock::nodesDB);
     this->edgeRef = edgeReferenceAddress;
     return true;
 }
@@ -279,7 +280,7 @@ bool NodeBlock::setCentralRelationHead(RelationBlock newRelation) {
                                 std::to_string(this->addr));
         return false;
     }
-    NodeBlock::nodesDB->flush();  // Sync the file with in-memory stream
+    FlushManager::recordWrite(NodeBlock::nodesDB);
     this->centralEdgeRef = centralEdgeReferenceAddress;
     return true;
 }

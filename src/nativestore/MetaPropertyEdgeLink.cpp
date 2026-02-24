@@ -16,6 +16,7 @@ limitations under the License.
 #include <memory>
 #include "MetaPropertyEdgeLink.h"
 #include "../util/logger/Logger.h"
+#include "FlushManager.h"
 
 Logger metaPropertyEdgeLinkLogger;
 thread_local unsigned int MetaPropertyEdgeLink::nextPropertyIndex = 1;
@@ -72,7 +73,7 @@ unsigned int MetaPropertyEdgeLink::insert(std::string name, char* value) {
         pthread_mutex_lock(&lockInsertMetaPropertyEdgeLink);
         this->metaEdgePropertiesDB->seekp(this->blockAddress + MetaPropertyEdgeLink::MAX_NAME_SIZE);
         this->metaEdgePropertiesDB->write(reinterpret_cast<char*>(dataValue), MetaPropertyEdgeLink::MAX_VALUE_SIZE);
-        this->metaEdgePropertiesDB->flush();
+        FlushManager::recordWrite(this->metaEdgePropertiesDB);
         pthread_mutex_unlock(&lockInsertMetaPropertyEdgeLink);
         metaPropertyEdgeLinkLogger.debug("Updating already existing property key = " + std::string(name));
         return this->blockAddress;
@@ -92,7 +93,7 @@ unsigned int MetaPropertyEdgeLink::insert(std::string name, char* value) {
             return -1;
         }
 
-        this->metaEdgePropertiesDB->flush();
+        FlushManager::recordWrite(this->metaEdgePropertiesDB);
         this->nextPropAddress = newAddress;
         this->metaEdgePropertiesDB->seekp(this->blockAddress + MetaPropertyEdgeLink::MAX_NAME_SIZE +
                                       MetaPropertyEdgeLink::MAX_VALUE_SIZE);  // seek to current property next address
@@ -124,7 +125,7 @@ MetaPropertyEdgeLink* MetaPropertyEdgeLink::create(std::string name, char value[
                                         " into block a new address = " + std::to_string(newAddress));
         return nullptr;
     }
-    MetaPropertyEdgeLink::metaEdgePropertiesDB->flush();
+    FlushManager::recordWrite(MetaPropertyEdgeLink::metaEdgePropertiesDB);
     MetaPropertyEdgeLink::nextPropertyIndex++;  // Increment the shared property index value
     pthread_mutex_unlock(&lockCreateMetaPropertyEdgeLink);
     return new MetaPropertyEdgeLink(newAddress, name, value, nextAddress);

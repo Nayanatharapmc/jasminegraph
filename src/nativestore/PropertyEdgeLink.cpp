@@ -19,6 +19,8 @@ limitations under the License.
 #include <memory>
 
 #include "../util/logger/Logger.h"
+#include "FlushManager.h"
+
 Logger property_edge_link_logger;
 thread_local unsigned int PropertyEdgeLink::nextPropertyIndex = 1;
 thread_local std::fstream* PropertyEdgeLink::edgePropertiesDB = NULL;
@@ -132,7 +134,7 @@ unsigned int PropertyEdgeLink::insert(std::string name, char* value) {
                                             " into block address " + std::to_string(this->blockAddress));
             return -1;
         }
-        this->edgePropertiesDB->flush();
+        FlushManager::recordWrite(this->edgePropertiesDB);
         //        property_edge_link_logger.info("nextPropertyIndex = " +
         //        std::to_string(PropertyEdgeLink::nextPropertyIndex));
         PropertyEdgeLink::nextPropertyIndex++;  // Increment the shared property index value
@@ -159,7 +161,7 @@ PropertyEdgeLink* PropertyEdgeLink::create(std::string name, char value[]) {
                                         " into block a new address = " + std::to_string(newAddress));
         return NULL;
     }
-    PropertyEdgeLink::edgePropertiesDB->flush();
+    FlushManager::recordWrite(PropertyEdgeLink::edgePropertiesDB);
     //    property_edge_link_logger.info("nextPropertyIndex = " + std::to_string(PropertyEdgeLink::nextPropertyIndex));
     //    property_edge_link_logger.info("newAddress = " + std::to_string(newAddress));
     PropertyEdgeLink::nextPropertyIndex++;  // Increment the shared property index value

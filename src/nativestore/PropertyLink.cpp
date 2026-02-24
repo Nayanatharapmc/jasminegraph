@@ -18,6 +18,7 @@ limitations under the License.
 #include <vector>
 
 #include "../util/logger/Logger.h"
+#include "FlushManager.h"
 
 Logger property_link_logger;
 thread_local unsigned int PropertyLink::nextPropertyIndex = 1;
@@ -149,7 +150,7 @@ unsigned int PropertyLink::insert(std::string name, const char* value) {
                                        " into block address " + std::to_string(this->blockAddress));
             return -1;
         }
-        this->propertiesDB->flush();
+        FlushManager::recordWrite(this->propertiesDB);
 
         //        property_link_logger.info("nextPropertyIndex = " + std::to_string(PropertyLink::nextPropertyIndex));
         PropertyLink::nextPropertyIndex++;  // Increment the shared property index value
@@ -180,7 +181,7 @@ PropertyLink* PropertyLink::create(std::string name, const char* value) {
                                    " into block a new address = " + std::to_string(newAddress));
         return NULL;
     }
-    PropertyLink::propertiesDB->flush();
+    FlushManager::recordWrite(PropertyLink::propertiesDB);
     //    property_link_logger.info("nextPropertyIndex = " + std::to_string(PropertyLink::nextPropertyIndex));
     //    property_link_logger.info("newAddress = " + std::to_string(newAddress));
     PropertyLink::nextPropertyIndex++;  // Increment the shared property index value

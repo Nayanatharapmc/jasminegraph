@@ -180,6 +180,7 @@ set(SOURCES src/backend/JasmineGraphBackend.cpp
         src/nativestore/PropertyEdgeLink.cpp
         src/nativestore/RelationBlock.cpp
         src/nativestore/DataPublisher.cpp
+        src/nativestore/FlushManager.cpp
         src/partitioner/stream/Partition.cpp
         src/k8s/K8sWorkerController.cpp
         src/streamingdb/StreamingSQLiteDBInterface.cpp

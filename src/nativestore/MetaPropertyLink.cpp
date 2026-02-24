@@ -13,6 +13,7 @@ limitations under the License.
 
 #include "MetaPropertyLink.h"
 #include "../util/logger/Logger.h"
+#include "FlushManager.h"
 
 Logger meta_property_link_logger;
 thread_local unsigned int MetaPropertyLink::nextPropertyIndex = 1;
@@ -69,7 +70,7 @@ unsigned int MetaPropertyLink::insert(std::string name, const char* value) {
         pthread_mutex_lock(&lockInsertMetaPropertyLink);
         this->metaPropertiesDB->seekp(this->blockAddress + MetaPropertyLink::MAX_NAME_SIZE);
         this->metaPropertiesDB->write(reinterpret_cast<char*>(dataValue), MetaPropertyLink::MAX_VALUE_SIZE);
-        this->metaPropertiesDB->flush();
+        FlushManager::recordWrite(this->metaPropertiesDB);
         pthread_mutex_unlock(&lockInsertMetaPropertyLink);
         meta_property_link_logger.debug("Updating already existing property key = " + std::string(name));
         return this->blockAddress;
@@ -87,7 +88,7 @@ unsigned int MetaPropertyLink::insert(std::string name, const char* value) {
             return -1;
         }
 
-        this->metaPropertiesDB->flush();
+        FlushManager::recordWrite(this->metaPropertiesDB);
 
         this->nextPropAddress = newAddress;
         this->metaPropertiesDB->seekp(this->blockAddress + MetaPropertyLink::MAX_NAME_SIZE +
@@ -118,7 +119,7 @@ MetaPropertyLink* MetaPropertyLink::create(std::string name, const char* value) 
                                    " into block a new address = " + std::to_string(newAddress));
         return NULL;
     }
-    MetaPropertyLink::metaPropertiesDB->flush();
+    FlushManager::recordWrite(MetaPropertyLink::metaPropertiesDB);
     MetaPropertyLink::nextPropertyIndex++;  // Increment the shared property index value
     pthread_mutex_unlock(&lockCreateMetaPropertyLink);
     return new MetaPropertyLink(newAddress, name, value, nextAddress);

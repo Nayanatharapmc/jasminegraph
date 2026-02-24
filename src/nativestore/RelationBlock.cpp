@@ -19,6 +19,7 @@ limitations under the License.
 #include "../util/logger/Logger.h"
 #include "NodeManager.h"
 #include "MetaPropertyEdgeLink.h"
+#include "FlushManager.h"
 
 Logger relation_block_logger;
 pthread_mutex_t lockAddProperty;
@@ -131,7 +132,7 @@ RelationBlock* RelationBlock::addLocalRelation(NodeBlock source, NodeBlock desti
     }
 
     RelationBlock::nextLocalRelationIndex += 1;
-    RelationBlock::relationsDB->flush();
+    FlushManager::recordWrite(RelationBlock::relationsDB);
     return new RelationBlock(relationBlockAddress, sourceData, destinationData,
                              this->propertyAddress, this->type);
 }
@@ -256,7 +257,7 @@ RelationBlock* RelationBlock::addCentralRelation(NodeBlock source, NodeBlock des
     }
 
     RelationBlock::nextCentralRelationIndex += 1;
-    RelationBlock::centralRelationsDB->flush();
+    FlushManager::recordWrite(RelationBlock::centralRelationsDB);
     return new RelationBlock(relationBlockAddress, sourceData, destinationData,
                              this->propertyAddress, this->metaPropertyAddress, this->type);
 }
@@ -689,7 +690,7 @@ bool RelationBlock::updateLocalRelationRecords(RelationOffsets recordOffset, uns
                                     "data " + std::to_string(data));
         return false;
     }
-    RelationBlock::relationsDB->flush();
+    FlushManager::recordWrite(RelationBlock::relationsDB);
     return true;
 }
 
@@ -702,7 +703,7 @@ bool RelationBlock::updateCentralRelationRecords(RelationOffsets recordOffset, u
                                     "data " + std::to_string(data));
         return false;
     }
-    RelationBlock::centralRelationsDB->flush();
+    FlushManager::recordWrite(RelationBlock::centralRelationsDB);
     return true;
 }
 

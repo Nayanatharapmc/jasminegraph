@@ -11,15 +11,17 @@ See the License for the specific language governing permissions and
 limitations under the License.
 **/
 
+#ifndef NODE_MANAGER
+#define NODE_MANAGER
+
 #include <fstream>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
+#include <vector>
+#include <mutex>
 
 #include "NodeBlock.h"
-
-#ifndef NODE_MANAGER
-#define NODE_MANAGER
 
 struct GraphConfig {
     unsigned long maxLabelSize;
@@ -41,7 +43,12 @@ class NodeManager {
 
     std::string edgeIndexDBPath;
 
-
+    // Buffered index updates
+    std::vector<std::pair<std::string, unsigned int>> pendingNodeIndexWrites;
+    std::mutex indexBufferMutex;
+    static const unsigned int INDEX_BUFFER_SIZE = 1000;
+    
+    void flushNodeIndexBuffer();
 
     void persistNodeIndex();
     void persistEdgeIndex();

@@ -28,9 +28,13 @@ limitations under the License.
 #include "iostream"
 #include <sys/stat.h>
 #include <thread>
+#include "FlushManager.h"
 
 Logger node_manager_logger;
-pthread_mutex_t lockEdgeAdd;
+
+// Per-partition lock map for parallel edge insertion
+static std::mutex partitionLocksMapMutex;
+static std::unordered_map<std::string, std::shared_ptr<std::mutex>> partitionLocks;
 
 NodeManager::NodeManager(GraphConfig gConfig) {
     this->graphID = gConfig.graphID;
@@ -309,7 +313,18 @@ NodeBlock *NodeManager::addNode(std::string nodeId) {
 }
 
 RelationBlock *NodeManager::addLocalEdge(std::pair<std::string, std::string> edge) {
-    pthread_mutex_lock(&lockEdgeAdd);
+    // Get per-partition lock for this NodeManager instance
+    std::string partitionKey = std::to_string(this->graphID) + "_" + std::to_string(this->partitionID);
+    std::shared_ptr<std::mutex> partitionLock;
+    {
+        std::lock_guard<std::mutex> guard(partitionLocksMapMutex);
+        if (partitionLocks.find(partitionKey) == partitionLocks.end()) {
+            partitionLocks[partitionKey] = std::make_shared<std::mutex>();
+        }
+        partitionLock = partitionLocks[partitionKey];
+    }
+    
+    std::lock_guard<std::mutex> lock(*partitionLock);
 
     NodeBlock *sourceNode = this->addNode(edge.first);
     NodeBlock *destNode = this->addNode(edge.second);
@@ -320,18 +335,24 @@ RelationBlock *NodeManager::addLocalEdge(std::pair<std::string, std::string> edg
         this->nextEdgeIndex++;
     }
 
-    pthread_mutex_unlock(&lockEdgeAdd);
-
     node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
                               " Destination DB block address " + std::to_string(destNode->addr));
     return newRelation;
 }
 
 RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> edge) {
-    //    std::unique_lock<std::mutex> guard1(lockCentralEdgeAdd);
-    //
-    //    guard1.lock();
-    pthread_mutex_lock(&lockEdgeAdd);
+    // Get per-partition lock for this NodeManager instance
+    std::string partitionKey = std::to_string(this->graphID) + "_" + std::to_string(this->partitionID);
+    std::shared_ptr<std::mutex> partitionLock;
+    {
+        std::lock_guard<std::mutex> guard(partitionLocksMapMutex);
+        if (partitionLocks.find(partitionKey) == partitionLocks.end()) {
+            partitionLocks[partitionKey] = std::make_shared<std::mutex>();
+        }
+        partitionLock = partitionLocks[partitionKey];
+    }
+    
+    std::lock_guard<std::mutex> lock(*partitionLock);
 
     NodeBlock *sourceNode = this->addNode(edge.first);
     NodeBlock *destNode = this->addNode(edge.second);
@@ -340,7 +361,6 @@ RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> e
         newRelation->setDestination(destNode);
         newRelation->setSource(sourceNode);
     }
-    pthread_mutex_unlock(&lockEdgeAdd);
 
     //    guard1.unlock();
     node_manager_logger.debug("DEBUG: Source DB block address " + std::to_string(sourceNode->addr) +
@@ -350,18 +370,40 @@ RelationBlock *NodeManager::addCentralEdge(std::pair<std::string, std::string> e
 
 void NodeManager::addNodeIndex(std::string nodeId, unsigned int nodeIndex) {
     this->nodeIndex.insert({nodeId, this->nextNodeIndex});
+    
+    // Buffer index writes
+    {
+        std::lock_guard<std::mutex> lock(indexBufferMutex);
+        pendingNodeIndexWrites.push_back({nodeId, nodeIndex});
+        
+        // Flush if buffer is full
+        if (pendingNodeIndexWrites.size() >= INDEX_BUFFER_SIZE) {
+            flushNodeIndexBuffer();
+        }
+    }
+}
 
+void NodeManager::flushNodeIndexBuffer() {
+    // Caller must hold indexBufferMutex
+    if (pendingNodeIndexWrites.empty()) {
+        return;
+    }
+    
     std::ofstream index_db(indexDBPath, std::ios::app | std::ios::binary);
     if (index_db.is_open()) {
-        char nodeIDC[NodeManager::INDEX_KEY_SIZE] = {0};  // Initialize with null chars
-        std::strcpy(nodeIDC, nodeId.c_str());
-        index_db.write(nodeIDC, sizeof(nodeIDC));
-        index_db.write(reinterpret_cast<char *>(&nodeIndex), sizeof(unsigned int));
+        for (const auto& entry : pendingNodeIndexWrites) {
+            char nodeIDC[NodeManager::INDEX_KEY_SIZE] = {0};
+            std::strcpy(nodeIDC, entry.first.c_str());
+            index_db.write(nodeIDC, sizeof(nodeIDC));
+            index_db.write(reinterpret_cast<const char *>(&entry.second), sizeof(unsigned int));
+            
+            node_manager_logger.debug("Writing batched node index --> Node key = " +
+                                      std::string(nodeIDC) + ", value = " + std::to_string(entry.second));
+        }
         index_db.flush();
-        node_manager_logger.debug("Writing node index --> Node key = " +
-                                  std::string(nodeIDC) + ", value = " + std::to_string(nodeIndex));
+        pendingNodeIndexWrites.clear();
     } else {
-        node_manager_logger.error("Failed to open index database file.");
+        node_manager_logger.error("Failed to open index database file for batch write.");
     }
     index_db.close();
 }
@@ -637,22 +679,30 @@ std::map<long, long> NodeManager::getDistributionMap() {
  *
  * **/
 void NodeManager::close() {
+    // Flush any buffered index writes before persisting
+    {
+        std::lock_guard<std::mutex> lock(indexBufferMutex);
+        flushNodeIndexBuffer();
+    }
+    
     this->persistNodeIndex();
     this->persistEdgeIndex();
+    
+    // Force flush all streams before closing
     if (PropertyLink::propertiesDB) {
-        PropertyLink::propertiesDB->flush();
+        FlushManager::forceFlush(PropertyLink::propertiesDB);
         PropertyLink::propertiesDB->close();
     }
     if (NodeBlock::nodesDB) {
-        NodeBlock::nodesDB->flush();
+        FlushManager::forceFlush(NodeBlock::nodesDB);
         NodeBlock::nodesDB->close();
     }
     if (RelationBlock::relationsDB) {
-        RelationBlock::relationsDB->flush();
+        FlushManager::forceFlush(RelationBlock::relationsDB);
         RelationBlock::relationsDB->close();
     }
     if (RelationBlock::centralRelationsDB) {
-        RelationBlock::centralRelationsDB->flush();
+        FlushManager::forceFlush(RelationBlock::centralRelationsDB);
         RelationBlock::centralRelationsDB->close();
     }
 }
