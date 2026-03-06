@@ -108,8 +108,19 @@ partitionedEdge Partitioner::ldgPartitioning(std::pair<std::string, std::string>
 }
 
 partitionedEdge Partitioner::hashPartitioning(std::pair<std::string, std::string> edge) {
-    int firstIndex = stoi(edge.first) % this->numberOfPartitions;    // Hash partitioning
-    int secondIndex = stoi(edge.second) % this->numberOfPartitions;  // Hash partitioning
+    int firstIndex, secondIndex;
+    try {
+        firstIndex = stoi(edge.first) % this->numberOfPartitions;    // Hash partitioning
+        secondIndex = stoi(edge.second) % this->numberOfPartitions;  // Hash partitioning
+    } catch (const std::invalid_argument& e) {
+        streaming_partitioner_logger.error("Invalid vertex ID in edge: first='" + edge.first + 
+                                          "', second='" + edge.second + "'. Error: " + e.what());
+        return {{edge.first, -1}, {edge.second, -1}};  // Return invalid partition index
+    } catch (const std::out_of_range& e) {
+        streaming_partitioner_logger.error("Vertex ID out of range in edge: first='" + edge.first + 
+                                          "', second='" + edge.second + "'. Error: " + e.what());
+        return {{edge.first, -1}, {edge.second, -1}};  // Return invalid partition index
+    }
 
     if (firstIndex == secondIndex) {
         this->partitions[firstIndex].addEdge(edge, this->isDirect);
@@ -231,7 +242,24 @@ partitionedEdge Partitioner::fennelPartitioning(std::pair<std::string, std::stri
  **/
 std::pair<long, long> Partitioner::deserialize(std::string data) {
     std::vector<std::string> v = Partition::_split(data, ' ');
-    streaming_partitioner_logger.debug("Vertext/Node 1 = " + stoi(v[0]));
-    streaming_partitioner_logger.debug("Vertext/Node 2 = " + stoi(v[1]));
-    return {stoi(v[0]), stoi(v[1])};
+    
+    if (v.size() < 2) {
+        streaming_partitioner_logger.error("Invalid data format: expected 2 space-separated values, got " + 
+                                          std::to_string(v.size()));
+        return {-1, -1};
+    }
+    
+    try {
+        long first = stoi(v[0]);
+        long second = stoi(v[1]);
+        streaming_partitioner_logger.debug("Vertext/Node 1 = " + std::to_string(first));
+        streaming_partitioner_logger.debug("Vertext/Node 2 = " + std::to_string(second));
+        return {first, second};
+    } catch (const std::invalid_argument& e) {
+        streaming_partitioner_logger.error("Invalid vertex ID in data: '" + data + "'. Error: " + e.what());
+        return {-1, -1};
+    } catch (const std::out_of_range& e) {
+        streaming_partitioner_logger.error("Vertex ID out of range in data: '" + data + "'. Error: " + e.what());
+        return {-1, -1};
+    }
 }
