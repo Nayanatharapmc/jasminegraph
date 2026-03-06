@@ -1502,7 +1502,17 @@ static void add_stream_kafka_command(int connFd, std::string &kafka_server_IP, c
     // Subscribe to the Kafka topic.
     kstream->Subscribe(topic_name_s);
     // Create the StreamHandler object.
-    StreamHandler *stream_handler = new StreamHandler(kstream, numberOfPartitions, workerClients, sqlite, stoi(graphId),
+    int graphIdInt;
+    try {
+        graphIdInt = stoi(graphId);
+    } catch (const std::exception& e) {
+        frontend_logger.error("Invalid graph ID: '" + graphId + "'. Error: " + e.what());
+        string errorMsg = "Error: Invalid graph ID";
+        write(connFd, errorMsg.c_str(), errorMsg.length());
+        *loop_exit_p = true;
+        return;
+    }
+    StreamHandler *stream_handler = new StreamHandler(kstream, numberOfPartitions, workerClients, sqlite, graphIdInt,
                                                       direction == Conts::DIRECTED, spt::getPartitioner(partitionAlgo));
 
     if (existingGraph != "y") {
