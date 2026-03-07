@@ -87,15 +87,50 @@ void StreamHandler::listen_to_kafka_topic() {
             continue;
         }
         string data(msg.get_payload());
-        auto edgeJson = json::parse(data);
+        
+        // Validate and parse JSON
+        json edgeJson;
+        try {
+            edgeJson = json::parse(data);
+        } catch (const json::parse_error& e) {
+            frontend_logger.error("Failed to parse JSON from Kafka message: " + std::string(e.what()));
+            continue;
+        }
+
+        // Validate required fields exist
+        if (!edgeJson.contains("source") || !edgeJson.contains("destination") || !edgeJson.contains("properties")) {
+            frontend_logger.error("Invalid JSON structure: missing required fields (source/destination/properties)");
+            continue;
+        }
 
         auto prop = edgeJson["properties"];
         prop["graphId"] = to_string(this->graphId);
         auto sourceJson = edgeJson["source"];
         auto destinationJson = edgeJson["destination"];
+        
+        // Validate source and destination IDs
+        if (!sourceJson.contains("id") || !destinationJson.contains("id")) {
+            frontend_logger.error("Invalid JSON structure: source or destination missing 'id' field");
+            continue;
+        }
+        
         string sId = std::string(sourceJson["id"]);
         string dId = std::string(destinationJson["id"]);
+        
+        // Validate IDs are not empty
+        if (sId.empty() || dId.empty()) {
+            frontend_logger.error("Invalid vertex IDs: source or destination ID is empty");
+            continue;
+        }
+        
         partitionedEdge partitionedEdge = graphPartitioner.addEdge({sId, dId});
+        
+        // Check if partitioning was successful (negative index indicates error)
+        if (partitionedEdge[0].second < 0 || partitionedEdge[1].second < 0) {
+            frontend_logger.error("Failed to partition edge: source='" + sId + "', destination='" + dId + "'");
+            continue;
+        }
+        
         sourceJson["pid"] = partitionedEdge[0].second;
         destinationJson["pid"] = partitionedEdge[1].second;
         string source = sourceJson.dump();

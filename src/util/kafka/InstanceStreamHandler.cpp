@@ -97,8 +97,19 @@ InstanceStreamHandler::loadStreamingStore(std::string graphId, std::string parti
     instance_stream_logger.info("###INSTANCE### Loading streaming Store for" + graphIdentifier
                                + " : Started");
     std::string folderLocation = Utils::getJasmineGraphProperty("org.jasminegraph.server.instance.datafolder");
+    
+    int graphIdInt, partitionIdInt;
+    try {
+        graphIdInt = stoi(graphId);
+        partitionIdInt = stoi(partitionId);
+    } catch (const std::exception& e) {
+        instance_stream_logger.error("Invalid graphId or partitionId: graphId='" + graphId + 
+                                    "', partitionId='" + partitionId + "'. Error: " + e.what());
+        return nullptr;
+    }
+    
     auto *jasmineGraphStreamingLocalStore = new JasmineGraphIncrementalLocalStore(
-                                     stoi(graphId), stoi(partitionId), dbFilesOpenMode, isEmbed);
+                                     graphIdInt, partitionIdInt, dbFilesOpenMode, isEmbed);
     graphDBMapStreamingStores.insert(std::make_pair(graphIdentifier, jasmineGraphStreamingLocalStore));
     instance_stream_logger.info("###INSTANCE### Loading Local Store : Completed");
     return jasmineGraphStreamingLocalStore;
