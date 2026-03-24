@@ -45,6 +45,7 @@ LIMITATION: Currently applies to HASH partitioning only.
 
 #include "../../localstore/incremental/JasmineGraphIncrementalLocalStore.h"
 #include "../../temporalstore/TemporalStore.h"
+#include "../../temporalstore/WorkerLocalReorderStage.h"
 #include "../logger/Logger.h"
 #include "InstanceStreamHandler.h"
 
@@ -64,6 +65,9 @@ struct WorkerKafkaConfig {
     uint32_t    initialSnapshotId = 0;
     int         numConsumerThreads = 3;  // parallel Kafka consumer threads
     int         workerIndex     = 0;  // index of this worker (0, 1, 2, ...)
+    bool        reorderStageEnabled = false;
+    uint64_t    reorderAllowedLatenessMs = 0;
+    uint64_t    reorderMaxBufferSize = 50000;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────

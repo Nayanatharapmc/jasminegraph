@@ -13,6 +13,8 @@ limitations under the License.
 
 #include "StreamHandler.h"
 
+#include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <nlohmann/json.hpp>
 #include <string>
@@ -903,17 +905,37 @@ void StreamHandler::listenViaDirectWorkers(
     bool temporalEnabled = !localTemporalStores.empty();
     uint64_t timeThreshold = 0, edgeThreshold = 0;
     uint32_t initialSnapshotId = globalSnapshotId;
+    bool reorderStageEnabled = false;
+    uint64_t reorderAllowedLatenessMs = 0;
+    uint64_t reorderMaxBufferSize = 50000;
     if (temporalEnabled) {
         std::string tProp = Utils::getJasmineGraphProperty(
             "org.jasminegraph.server.streaming.temporal.time.threshold");
         std::string eProp = Utils::getJasmineGraphProperty(
             "org.jasminegraph.server.streaming.temporal.edge.threshold");
+        std::string reorderEnabledProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.enabled");
+        std::string reorderLatenessProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.allowed.lateness.ms");
+        std::string reorderBufferProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.max.buffer.size");
         if (!tProp.empty()) timeThreshold = std::stoull(tProp);
         if (!eProp.empty()) edgeThreshold = std::stoull(eProp);
+        if (!reorderEnabledProp.empty()) {
+            std::string lower = reorderEnabledProp;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+            reorderStageEnabled = (lower == "true" || lower == "1" || lower == "yes");
+        }
+        if (!reorderLatenessProp.empty()) reorderAllowedLatenessMs = std::stoull(reorderLatenessProp);
+        if (!reorderBufferProp.empty()) reorderMaxBufferSize = std::stoull(reorderBufferProp);
         streamHandlerLogger().info("[TEMPORAL CFG] listenViaDirectWorkers:"
             " temporalEnabled=true edgeThreshold=" + std::to_string(edgeThreshold) +
             " timeThreshold=" + std::to_string(timeThreshold) +
             " initialSnapshotId=" + std::to_string(initialSnapshotId) +
+            " reorderEnabled=" + std::string(reorderStageEnabled ? "true" : "false") +
+            " reorderLatenessMs=" + std::to_string(reorderAllowedLatenessMs) +
+            " reorderMaxBuffer=" + std::to_string(reorderMaxBufferSize) +
             " (rawEdgeProp='" + eProp + "' rawTimeProp='" + tProp + "')");
         if (edgeThreshold == 0 && timeThreshold == 0) {
             streamHandlerLogger().warn("[TEMPORAL CFG] BOTH thresholds are 0 — workers will never"
@@ -975,6 +997,9 @@ void StreamHandler::listenViaDirectWorkers(
         configJson["timeThreshold"]      = timeThreshold;
         configJson["edgeThreshold"]      = edgeThreshold;
         configJson["initialSnapshotId"]  = initialSnapshotId;
+        configJson["reorderStageEnabled"] = reorderStageEnabled;
+        configJson["reorderAllowedLatenessMs"] = reorderAllowedLatenessMs;
+        configJson["reorderMaxBufferSize"] = reorderMaxBufferSize;
         // Thread count = total Kafka topic partitions (worker reads ALL of them in its own group).
         // Owned graph partitions are a separate concept — they control which EDGES are stored,
         // not how many Kafka partitions this worker's consumer group is assigned.

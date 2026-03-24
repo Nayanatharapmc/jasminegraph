@@ -4644,6 +4644,9 @@ static void worker_direct_kafka_stream_command(
         cfg.initialSnapshotId  = configJson["initialSnapshotId"].get<uint32_t>();
         cfg.numConsumerThreads = configJson["numConsumerThreads"].get<int>();
         cfg.workerIndex        = configJson.value("workerIndex", 0);
+        cfg.reorderStageEnabled = configJson.value("reorderStageEnabled", false);
+        cfg.reorderAllowedLatenessMs = configJson.value("reorderAllowedLatenessMs", static_cast<uint64_t>(0));
+        cfg.reorderMaxBufferSize = configJson.value("reorderMaxBufferSize", static_cast<uint64_t>(50000));
         for (auto& p : configJson["ownedPartitions"]) {
             cfg.ownedPartitions.push_back(p.get<int>());
         }

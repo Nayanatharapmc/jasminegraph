@@ -81,7 +81,10 @@ WorkerKafkaConsumer::WorkerKafkaConsumer(
             if (!s.empty()) s.pop_back();
             return s;
         }() + "]" +
-        " threads=" + std::to_string(cfg.numConsumerThreads));
+        " threads=" + std::to_string(cfg.numConsumerThreads) +
+        " reorderEnabled=" + std::string(cfg.reorderStageEnabled ? "true" : "false") +
+        " reorderLatenessMs=" + std::to_string(cfg.reorderAllowedLatenessMs) +
+        " reorderMaxBuffer=" + std::to_string(cfg.reorderMaxBufferSize));
 }
 
 WorkerKafkaConsumer::~WorkerKafkaConsumer() noexcept {
@@ -314,6 +317,124 @@ void WorkerKafkaConsumer::consumerThreadFunc(
     // Pre-computed once: graphId as string for fast identifier building
     const std::string graphIdStr = std::to_string(cfg.graphId);
 
+    // Worker-local reorder stage (first step): keep per-thread event-time ordering
+    // before writing to temporal and incremental stores.
+    WorkerLocalReorderStage reorderStage(cfg.reorderStageEnabled,
+                                         cfg.reorderAllowedLatenessMs,
+                                         cfg.reorderMaxBufferSize);
+    uint64_t reorderSequence = 0;
+
+    auto processEdgeJson = [&](json edgeJson) {
+        auto prop    = edgeJson["properties"];
+        prop["graphId"] = graphIdStr;
+        auto srcJson = edgeJson["source"];
+        auto dstJson = edgeJson["destination"];
+        std::string sId = std::string(srcJson["id"]);
+        std::string dId = std::string(dstJson["id"]);
+
+        // ── 2. DETERMINISTIC HASH PARTITION ───────────────────────────
+        // Identical formula to Partitioner::hashPartitioning so assignments
+        // are consistent with what the master stores in the meta DB.
+        int part_s = static_cast<int>(hasher(sId) % cfg.numberOfPartitions);
+        int part_d = static_cast<int>(hasher(dId) % cfg.numberOfPartitions);
+
+        bool srcOwned = isOwnedPartition(part_s);
+        bool dstOwned = isOwnedPartition(part_d);
+
+        // Ignore edges that don't touch this worker's partitions at all
+        if (!srcOwned && !dstOwned) {
+            return;
+        }
+
+        // ── 3. BUILD EDGE OBJECT (same JSON schema the TCP path produces) ──
+        srcJson["pid"] = part_s;
+        dstJson["pid"] = part_d;
+        json obj;
+        obj["source"]      = srcJson;
+        obj["destination"] = dstJson;
+        obj["properties"]  = prop;
+
+        // ── 4. TEMPORAL STORE (per-partition locks for reduced contention) ──
+        if (cfg.temporalEnabled) {
+            bool shouldSnapshot = false;
+            if (part_s == part_d) {
+                // Local edge: lock only the specific partition's mutex
+                auto it = localTemporalStores.find(part_s);
+                if (it != localTemporalStores.end()) {
+                    std::lock_guard<std::mutex> tlock(partitionTemporalMutexes_[part_s]);
+                    it->second->addEdge(sId, dId, globalSnapshotId.load());
+                    ++totalLocal;
+                    if (it->second->shouldCreateSnapshot())
+                        shouldSnapshot = true;
+                }
+            } else {
+                // Central edge: lock the central mutex
+                if (centralTemporalStore) {
+                    std::lock_guard<std::mutex> tlock(centralTemporalMutex_);
+                    centralTemporalStore->addEdge(sId, dId, globalSnapshotId.load());
+                    ++totalCentral;
+                    if (centralTemporalStore->shouldCreateSnapshot())
+                        shouldSnapshot = true;
+                }
+            }
+            if (shouldSnapshot) {
+                // CAS: exactly one thread triggers the snapshot; others see the flag set and skip.
+                // Eliminates the O(partitions) re-scan that the old mutex+loop approach needed.
+                bool expected = false;
+                if (snapshotInProgress_.compare_exchange_strong(
+                        expected, true,
+                        std::memory_order_acq_rel,
+                        std::memory_order_relaxed)) {
+                    createGlobalSnapshot();
+                    snapshotInProgress_.store(false, std::memory_order_release);
+                }
+            }
+        }
+
+        // ── 5. WRITE TO INCREMENTAL LOCAL STORE ───────────────────────
+        // Use handleRequest() which queues the edge and delegates to a
+        // dedicated per-partition processing thread.  This is critical
+        // because NodeManager uses static thread_local fstream pointers –
+        // the store MUST be created and used on the same thread.
+        if (part_s == part_d) {
+            // Local edge — both endpoints live in the same owned partition
+            obj["EdgeType"] = "Local";
+            obj["PID"]      = part_s;
+            streamHandler.handleRequest(std::move(obj),
+                                        graphIdStr + "_" + std::to_string(part_s));
+        } else {
+            // Central edge — may need to write to src's partition, dst's partition, or both
+            obj["EdgeType"] = "Central";
+
+            if (srcOwned && dstOwned) {
+                // Both partitions owned: copy for src, move into dst
+                json objSrc = obj;
+                objSrc["PID"] = part_s;
+                obj["PID"]    = part_d;
+                streamHandler.handleRequest(std::move(objSrc),
+                                            graphIdStr + "_" + std::to_string(part_s));
+                streamHandler.handleRequest(std::move(obj),
+                                            graphIdStr + "_" + std::to_string(part_d));
+            } else if (srcOwned) {
+                obj["PID"] = part_s;
+                streamHandler.handleRequest(std::move(obj),
+                                            graphIdStr + "_" + std::to_string(part_s));
+            } else {
+                obj["PID"] = part_d;
+                streamHandler.handleRequest(std::move(obj),
+                                            graphIdStr + "_" + std::to_string(part_d));
+            }
+        }
+
+        ++threadMsgs;
+        ++totalMessages;
+        if (threadMsgs % 50000 == 0 || (threadMsgs <= 1000 && threadMsgs % 100 == 0)) {
+            workerKafkaLogger().info("Worker thread " + std::to_string(threadId) +
+                                     ": " + std::to_string(threadMsgs) + " msgs queued" +
+                                     " (total=" + std::to_string(totalMessages.load()) + ")");
+        }
+    };
+
     workerKafkaLogger().info("Worker thread " + std::to_string(threadId) +
                              " entering consume loop (MAX_IDLE=" +
                              std::to_string(MAX_IDLE_POLLS) + "s)");
@@ -399,114 +520,21 @@ void WorkerKafkaConsumer::consumerThreadFunc(
                 continue;
             }
 
-            auto prop    = edgeJson["properties"];
-            prop["graphId"] = graphIdStr;
-            auto srcJson = edgeJson["source"];
-            auto dstJson = edgeJson["destination"];
-            std::string sId = std::string(srcJson["id"]);
-            std::string dId = std::string(dstJson["id"]);
+            const int64_t eventTimeMs = WorkerLocalReorderStage::extractEventTimeMs(
+                edgeJson, static_cast<int64_t>(reorderSequence));
+            reorderStage.push(std::move(edgeJson), eventTimeMs, reorderSequence++);
 
-            // ── 2. DETERMINISTIC HASH PARTITION ───────────────────────────
-            // Identical formula to Partitioner::hashPartitioning so assignments
-            // are consistent with what the master stores in the meta DB.
-            int part_s = static_cast<int>(hasher(sId) % cfg.numberOfPartitions);
-            int part_d = static_cast<int>(hasher(dId) % cfg.numberOfPartitions);
-
-            bool srcOwned = isOwnedPartition(part_s);
-            bool dstOwned = isOwnedPartition(part_d);
-
-            // Ignore edges that don't touch this worker's partitions at all
-            if (!srcOwned && !dstOwned) continue;
-
-            // ── 3. BUILD EDGE OBJECT (same JSON schema the TCP path produces) ──
-            srcJson["pid"] = part_s;
-            dstJson["pid"] = part_d;
-            json obj;
-            obj["source"]      = srcJson;
-            obj["destination"] = dstJson;
-            obj["properties"]  = prop;
-
-            // ── 4. TEMPORAL STORE (per-partition locks for reduced contention) ──
-            if (cfg.temporalEnabled) {
-                bool shouldSnapshot = false;
-                if (part_s == part_d) {
-                    // Local edge: lock only the specific partition's mutex
-                    auto it = localTemporalStores.find(part_s);
-                    if (it != localTemporalStores.end()) {
-                        std::lock_guard<std::mutex> tlock(partitionTemporalMutexes_[part_s]);
-                        it->second->addEdge(sId, dId, globalSnapshotId.load());
-                        ++totalLocal;
-                        if (it->second->shouldCreateSnapshot())
-                            shouldSnapshot = true;
-                    }
-                } else {
-                    // Central edge: lock the central mutex
-                    if (centralTemporalStore) {
-                        std::lock_guard<std::mutex> tlock(centralTemporalMutex_);
-                        centralTemporalStore->addEdge(sId, dId, globalSnapshotId.load());
-                        ++totalCentral;
-                        if (centralTemporalStore->shouldCreateSnapshot())
-                            shouldSnapshot = true;
-                    }
-                }
-                if (shouldSnapshot) {
-                    // CAS: exactly one thread triggers the snapshot; others see the flag set and skip.
-                    // Eliminates the O(partitions) re-scan that the old mutex+loop approach needed.
-                    bool expected = false;
-                    if (snapshotInProgress_.compare_exchange_strong(
-                            expected, true,
-                            std::memory_order_acq_rel,
-                            std::memory_order_relaxed)) {
-                        createGlobalSnapshot();
-                        snapshotInProgress_.store(false, std::memory_order_release);
-                    }
-                }
-            }
-
-            // ── 5. WRITE TO INCREMENTAL LOCAL STORE ───────────────────────
-            // Use handleRequest() which queues the edge and delegates to a
-            // dedicated per-partition processing thread.  This is critical
-            // because NodeManager uses static thread_local fstream pointers –
-            // the store MUST be created and used on the same thread.
-            if (part_s == part_d) {
-                // Local edge — both endpoints live in the same owned partition
-                obj["EdgeType"] = "Local";
-                obj["PID"]      = part_s;
-                streamHandler.handleRequest(std::move(obj),
-                                            graphIdStr + "_" + std::to_string(part_s));
-            } else {
-                // Central edge — may need to write to src's partition, dst's partition, or both
-                obj["EdgeType"] = "Central";
-
-                if (srcOwned && dstOwned) {
-                    // Both partitions owned: copy for src, move into dst
-                    json objSrc = obj;
-                    objSrc["PID"] = part_s;
-                    obj["PID"]    = part_d;
-                    streamHandler.handleRequest(std::move(objSrc),
-                                                graphIdStr + "_" + std::to_string(part_s));
-                    streamHandler.handleRequest(std::move(obj),
-                                                graphIdStr + "_" + std::to_string(part_d));
-                } else if (srcOwned) {
-                    obj["PID"] = part_s;
-                    streamHandler.handleRequest(std::move(obj),
-                                                graphIdStr + "_" + std::to_string(part_s));
-                } else {
-                    obj["PID"] = part_d;
-                    streamHandler.handleRequest(std::move(obj),
-                                                graphIdStr + "_" + std::to_string(part_d));
-                }
-            }
-
-            ++threadMsgs;
-            ++totalMessages;
-            if (threadMsgs % 50000 == 0 || (threadMsgs <= 1000 && threadMsgs % 100 == 0)) {
-                workerKafkaLogger().info("Worker thread " + std::to_string(threadId) +
-                                         ": " + std::to_string(threadMsgs) + " msgs queued" +
-                                         " (total=" + std::to_string(totalMessages.load()) + ")");
+            auto readyEdges = reorderStage.drainReady();
+            for (auto& readyEdge : readyEdges) {
+                processEdgeJson(std::move(readyEdge));
             }
         }  // end message loop
     }  // end while
+
+    auto bufferedEdges = reorderStage.flushAll();
+    for (auto& bufferedEdge : bufferedEdges) {
+        processEdgeJson(std::move(bufferedEdge));
+    }
 
     workerKafkaLogger().info("Worker consumer thread " + std::to_string(threadId) +
                              " finished. Messages processed: " + std::to_string(threadMsgs));
@@ -555,6 +583,9 @@ WorkerKafkaStats WorkerKafkaConsumer::run() {
                              " topic=" + cfg.topic +
                              " groupId=" + cfg.groupId +
                              " offset=earliest threads=" + std::to_string(cfg.numConsumerThreads) +
+                             " reorderEnabled=" + std::string(cfg.reorderStageEnabled ? "true" : "false") +
+                             " reorderLatenessMs=" + std::to_string(cfg.reorderAllowedLatenessMs) +
+                             " reorderMaxBuffer=" + std::to_string(cfg.reorderMaxBufferSize) +
                              " (consuming ALL messages from beginning of topic)");
 
     // Spawn N parallel consumer threads
