@@ -339,7 +339,7 @@ def test_streaming_triangle_count_with_kafka(host, port):
         logging.info('[Streaming] Published: %s', edge)
         time.sleep(0.5)
 
-    # Step 3: Wait for processing  
+    # Step 3: Wait for processing
     logging.info('[Streaming] Step 3: Waiting for triangle computation (20 seconds)')
     time.sleep(20)  # Give workers time to consume and compute triangles
 
@@ -583,6 +583,7 @@ def send_and_expect_contains(conn, test_name, send, expected_fragment, timeout=3
             logging.fatal('Failed some tests,')
             print(*failed_tests, sep='\n', file=sys.stderr)
             sys.exit(1)
+
 
 def send_and_expect_response_file(conn, test_name, send, expected_file, exit_on_failure=False):
     """Send a message to server and check the response on-the-fly against a large expected
