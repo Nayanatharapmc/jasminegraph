@@ -4647,6 +4647,9 @@ static void worker_direct_kafka_stream_command(
         cfg.reorderStageEnabled = configJson.value("reorderStageEnabled", false);
         cfg.reorderAllowedLatenessMs = configJson.value("reorderAllowedLatenessMs", static_cast<uint64_t>(0));
         cfg.reorderMaxBufferSize = configJson.value("reorderMaxBufferSize", static_cast<uint64_t>(50000));
+        cfg.lateEdgeCorrectionEnabled = configJson.value("lateEdgeCorrectionEnabled", false);
+        cfg.lateEdgeExtremeMultiplier = configJson.value("lateEdgeExtremeMultiplier", static_cast<uint64_t>(5));
+        cfg.lateEdgeCorrectionBatchSize = configJson.value("lateEdgeCorrectionBatchSize", static_cast<uint64_t>(1000));
         for (auto& p : configJson["ownedPartitions"]) {
             cfg.ownedPartitions.push_back(p.get<int>());
         }
