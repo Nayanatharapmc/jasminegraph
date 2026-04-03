@@ -97,6 +97,10 @@ class WorkerLocalReorderStage {
         return out;
     }
 
+    int64_t getMaxSeenEventTimeMs() const {
+        return maxSeenEventTimeMs_;
+    }
+
     static int64_t extractEventTimeMs(const json& edgeJson, int64_t fallbackValue) {
         static const std::vector<std::string> kCandidateKeys = {
             "event_time_ms", "eventTimeMs", "event_time", "eventTime", "timestamp_ms", "timestamp", "ts"};
