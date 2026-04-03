@@ -908,6 +908,9 @@ void StreamHandler::listenViaDirectWorkers(
     bool reorderStageEnabled = false;
     uint64_t reorderAllowedLatenessMs = 0;
     uint64_t reorderMaxBufferSize = 50000;
+    bool lateEdgeCorrectionEnabled = false;
+    uint64_t lateEdgeExtremeMultiplier = 5;
+    uint64_t lateEdgeCorrectionBatchSize = 1000;
     if (temporalEnabled) {
         std::string tProp = Utils::getJasmineGraphProperty(
             "org.jasminegraph.server.streaming.temporal.time.threshold");
@@ -919,6 +922,12 @@ void StreamHandler::listenViaDirectWorkers(
             "org.jasminegraph.server.streaming.temporal.reorder.allowed.lateness.ms");
         std::string reorderBufferProp = Utils::getJasmineGraphProperty(
             "org.jasminegraph.server.streaming.temporal.reorder.max.buffer.size");
+        std::string lateEdgeCorrectionEnabledProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.late.edge.correction.enabled");
+        std::string lateEdgeExtremeMultiplierProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.late.edge.extreme.multiplier");
+        std::string lateEdgeCorrectionBatchProp = Utils::getJasmineGraphProperty(
+            "org.jasminegraph.server.streaming.temporal.reorder.late.edge.correction.batch.size");
         if (!tProp.empty()) timeThreshold = std::stoull(tProp);
         if (!eProp.empty()) edgeThreshold = std::stoull(eProp);
         if (!reorderEnabledProp.empty()) {
@@ -929,6 +938,18 @@ void StreamHandler::listenViaDirectWorkers(
         }
         if (!reorderLatenessProp.empty()) reorderAllowedLatenessMs = std::stoull(reorderLatenessProp);
         if (!reorderBufferProp.empty()) reorderMaxBufferSize = std::stoull(reorderBufferProp);
+        if (!lateEdgeCorrectionEnabledProp.empty()) {
+            std::string lower = lateEdgeCorrectionEnabledProp;
+            std::transform(lower.begin(), lower.end(), lower.begin(),
+                           [](unsigned char c){ return static_cast<char>(std::tolower(c)); });
+            lateEdgeCorrectionEnabled = (lower == "true" || lower == "1" || lower == "yes");
+        }
+        if (!lateEdgeExtremeMultiplierProp.empty()) {
+            lateEdgeExtremeMultiplier = std::stoull(lateEdgeExtremeMultiplierProp);
+        }
+        if (!lateEdgeCorrectionBatchProp.empty()) {
+            lateEdgeCorrectionBatchSize = std::stoull(lateEdgeCorrectionBatchProp);
+        }
         streamHandlerLogger().info("[TEMPORAL CFG] listenViaDirectWorkers:"
             " temporalEnabled=true edgeThreshold=" + std::to_string(edgeThreshold) +
             " timeThreshold=" + std::to_string(timeThreshold) +
@@ -936,6 +957,9 @@ void StreamHandler::listenViaDirectWorkers(
             " reorderEnabled=" + std::string(reorderStageEnabled ? "true" : "false") +
             " reorderLatenessMs=" + std::to_string(reorderAllowedLatenessMs) +
             " reorderMaxBuffer=" + std::to_string(reorderMaxBufferSize) +
+            " lateEdgeCorrectionEnabled=" + std::string(lateEdgeCorrectionEnabled ? "true" : "false") +
+            " lateEdgeExtremeMultiplier=" + std::to_string(lateEdgeExtremeMultiplier) +
+            " lateEdgeCorrectionBatchSize=" + std::to_string(lateEdgeCorrectionBatchSize) +
             " (rawEdgeProp='" + eProp + "' rawTimeProp='" + tProp + "')");
         if (edgeThreshold == 0 && timeThreshold == 0) {
             streamHandlerLogger().warn("[TEMPORAL CFG] BOTH thresholds are 0 — workers will never"
@@ -1000,6 +1024,9 @@ void StreamHandler::listenViaDirectWorkers(
         configJson["reorderStageEnabled"] = reorderStageEnabled;
         configJson["reorderAllowedLatenessMs"] = reorderAllowedLatenessMs;
         configJson["reorderMaxBufferSize"] = reorderMaxBufferSize;
+        configJson["lateEdgeCorrectionEnabled"] = lateEdgeCorrectionEnabled;
+        configJson["lateEdgeExtremeMultiplier"] = lateEdgeExtremeMultiplier;
+        configJson["lateEdgeCorrectionBatchSize"] = lateEdgeCorrectionBatchSize;
         // Thread count = total Kafka topic partitions (worker reads ALL of them in its own group).
         // Owned graph partitions are a separate concept — they control which EDGES are stored,
         // not how many Kafka partitions this worker's consumer group is assigned.
