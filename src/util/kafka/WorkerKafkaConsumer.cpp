@@ -14,6 +14,7 @@ limitations under the License.
 #include "WorkerKafkaConsumer.h"
 
 #include <chrono>
+#include <limits>
 #include <sys/stat.h>
 #include <nlohmann/json.hpp>
 
@@ -84,7 +85,10 @@ WorkerKafkaConsumer::WorkerKafkaConsumer(
         " threads=" + std::to_string(cfg.numConsumerThreads) +
         " reorderEnabled=" + std::string(cfg.reorderStageEnabled ? "true" : "false") +
         " reorderLatenessMs=" + std::to_string(cfg.reorderAllowedLatenessMs) +
-        " reorderMaxBuffer=" + std::to_string(cfg.reorderMaxBufferSize));
+        " reorderMaxBuffer=" + std::to_string(cfg.reorderMaxBufferSize) +
+        " lateEdgeCorrectionEnabled=" + std::string(cfg.lateEdgeCorrectionEnabled ? "true" : "false") +
+        " lateEdgeExtremeMultiplier=" + std::to_string(cfg.lateEdgeExtremeMultiplier) +
+        " lateEdgeCorrectionBatchSize=" + std::to_string(cfg.lateEdgeCorrectionBatchSize));
 }
 
 WorkerKafkaConsumer::~WorkerKafkaConsumer() noexcept {
@@ -322,9 +326,18 @@ void WorkerKafkaConsumer::consumerThreadFunc(
     WorkerLocalReorderStage reorderStage(cfg.reorderStageEnabled,
                                          cfg.reorderAllowedLatenessMs,
                                          cfg.reorderMaxBufferSize);
+    LateEdgeCorrectionQueue lateEdgeCorrectionQueue;
     uint64_t reorderSequence = 0;
 
-    auto processEdgeJson = [&](json edgeJson) {
+    uint64_t fixedLateEdgeThresholdMs = std::numeric_limits<uint64_t>::max();
+    if (cfg.reorderAllowedLatenessMs > 0 &&
+        cfg.lateEdgeExtremeMultiplier > 0 &&
+        cfg.reorderAllowedLatenessMs <=
+            (std::numeric_limits<uint64_t>::max() / cfg.lateEdgeExtremeMultiplier)) {
+        fixedLateEdgeThresholdMs = cfg.reorderAllowedLatenessMs * cfg.lateEdgeExtremeMultiplier;
+    }
+
+    auto processEdgeJson = [&](json edgeJson, bool forceHistoricalSnapshot, uint32_t historicalSnapshotId) {
         auto prop    = edgeJson["properties"];
         prop["graphId"] = graphIdStr;
         auto srcJson = edgeJson["source"];
@@ -357,23 +370,25 @@ void WorkerKafkaConsumer::consumerThreadFunc(
         // ── 4. TEMPORAL STORE (per-partition locks for reduced contention) ──
         if (cfg.temporalEnabled) {
             bool shouldSnapshot = false;
+            const uint32_t temporalSnapshotId =
+                forceHistoricalSnapshot ? historicalSnapshotId : globalSnapshotId.load();
             if (part_s == part_d) {
                 // Local edge: lock only the specific partition's mutex
                 auto it = localTemporalStores.find(part_s);
                 if (it != localTemporalStores.end()) {
                     std::lock_guard<std::mutex> tlock(partitionTemporalMutexes_[part_s]);
-                    it->second->addEdge(sId, dId, globalSnapshotId.load());
+                    it->second->addEdge(sId, dId, temporalSnapshotId);
                     ++totalLocal;
-                    if (it->second->shouldCreateSnapshot())
+                    if (!forceHistoricalSnapshot && it->second->shouldCreateSnapshot())
                         shouldSnapshot = true;
                 }
             } else {
                 // Central edge: lock the central mutex
                 if (centralTemporalStore) {
                     std::lock_guard<std::mutex> tlock(centralTemporalMutex_);
-                    centralTemporalStore->addEdge(sId, dId, globalSnapshotId.load());
+                    centralTemporalStore->addEdge(sId, dId, temporalSnapshotId);
                     ++totalCentral;
-                    if (centralTemporalStore->shouldCreateSnapshot())
+                    if (!forceHistoricalSnapshot && centralTemporalStore->shouldCreateSnapshot())
                         shouldSnapshot = true;
                 }
             }
@@ -438,6 +453,42 @@ void WorkerKafkaConsumer::consumerThreadFunc(
     workerKafkaLogger().info("Worker thread " + std::to_string(threadId) +
                              " entering consume loop (MAX_IDLE=" +
                              std::to_string(MAX_IDLE_POLLS) + "s)");
+
+    auto routeReadyOrLateEdge = [&](json readyEdge) {
+        if (!(cfg.reorderStageEnabled && cfg.lateEdgeCorrectionEnabled && cfg.reorderAllowedLatenessMs > 0)) {
+            processEdgeJson(std::move(readyEdge), false, 0);
+            return;
+        }
+
+        const int64_t eventTimeMs = WorkerLocalReorderStage::extractEventTimeMs(
+            readyEdge, static_cast<int64_t>(reorderSequence));
+        const int64_t maxSeenEventTimeMs = reorderStage.getMaxSeenEventTimeMs();
+
+        if (maxSeenEventTimeMs > eventTimeMs && fixedLateEdgeThresholdMs != std::numeric_limits<uint64_t>::max()) {
+            const uint64_t delayMs = static_cast<uint64_t>(maxSeenEventTimeMs - eventTimeMs);
+            if (delayMs > fixedLateEdgeThresholdMs) {
+                const uint32_t currentSnapshotId = globalSnapshotId.load();
+                const uint32_t historicalSnapshotId = (currentSnapshotId > 0) ? currentSnapshotId - 1 : 0;
+                lateEdgeCorrectionQueue.enqueue(std::move(readyEdge), eventTimeMs, historicalSnapshotId);
+                return;
+            }
+        }
+
+        processEdgeJson(std::move(readyEdge), false, 0);
+    };
+
+    auto applyCorrectionBatch = [&](bool drainAll) {
+        const size_t batchSize = static_cast<size_t>(std::max<uint64_t>(1, cfg.lateEdgeCorrectionBatchSize));
+        auto corrections = drainAll ? lateEdgeCorrectionQueue.drainAll()
+                                    : lateEdgeCorrectionQueue.drainBatch(batchSize);
+        if (corrections.empty()) {
+            return;
+        }
+
+        for (auto& correction : corrections) {
+            processEdgeJson(std::move(correction.edge), true, correction.targetSnapshotId);
+        }
+    };
 
     while (!endSignalReceived && !myDone) {
         auto batch = consumer->poll_batch(KAFKA_BATCH, std::chrono::milliseconds(1000));
@@ -526,15 +577,21 @@ void WorkerKafkaConsumer::consumerThreadFunc(
 
             auto readyEdges = reorderStage.drainReady();
             for (auto& readyEdge : readyEdges) {
-                processEdgeJson(std::move(readyEdge));
+                routeReadyOrLateEdge(std::move(readyEdge));
+            }
+
+            if (lateEdgeCorrectionQueue.size() >=
+                static_cast<size_t>(std::max<uint64_t>(1, cfg.lateEdgeCorrectionBatchSize))) {
+                applyCorrectionBatch(false);
             }
         }  // end message loop
     }  // end while
 
     auto bufferedEdges = reorderStage.flushAll();
     for (auto& bufferedEdge : bufferedEdges) {
-        processEdgeJson(std::move(bufferedEdge));
+        routeReadyOrLateEdge(std::move(bufferedEdge));
     }
+    applyCorrectionBatch(true);
 
     workerKafkaLogger().info("Worker consumer thread " + std::to_string(threadId) +
                              " finished. Messages processed: " + std::to_string(threadMsgs));

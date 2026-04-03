@@ -44,6 +44,7 @@ LIMITATION: Currently applies to HASH partitioning only.
 #include <cppkafka/cppkafka.h>
 
 #include "../../localstore/incremental/JasmineGraphIncrementalLocalStore.h"
+#include "../../temporalstore/LateEdgeCorrectionQueue.h"
 #include "../../temporalstore/TemporalStore.h"
 #include "../../temporalstore/WorkerLocalReorderStage.h"
 #include "../logger/Logger.h"
@@ -68,6 +69,9 @@ struct WorkerKafkaConfig {
     bool        reorderStageEnabled = false;
     uint64_t    reorderAllowedLatenessMs = 0;
     uint64_t    reorderMaxBufferSize = 50000;
+    bool        lateEdgeCorrectionEnabled = false;
+    uint64_t    lateEdgeExtremeMultiplier = 5;
+    uint64_t    lateEdgeCorrectionBatchSize = 1000;
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
